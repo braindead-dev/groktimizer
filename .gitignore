@@ -18,3 +18,5 @@ dist/
 .DS_Store
 # local baseline cache; canonical copy lives in the research repo
 /results/
+# Next.js regenerates this with mode-specific route type imports.
+/frontend/next-env.d.ts

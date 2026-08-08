@@ -4,7 +4,6 @@ All writes go through gtz commands (single-writer discipline); the web UI reads
 the file read-only. WAL mode keeps concurrent gtz processes safe.
 """
 
-import json
 import os
 import sqlite3
 from datetime import UTC, datetime
@@ -153,9 +152,7 @@ class Store:
 
     def set_log_offset(self, sandbox: str, offset: int) -> None:
         with self.db:
-            self.db.execute(
-                "UPDATE agents SET log_offset=? WHERE sandbox=?", (offset, sandbox)
-            )
+            self.db.execute("UPDATE agents SET log_offset=? WHERE sandbox=?", (offset, sandbox))
 
     def append_log_chunk(self, sandbox: str, content: str, at: str | None = None) -> None:
         with self.db:

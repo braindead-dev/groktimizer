@@ -71,8 +71,7 @@ async def start_main_orchestrator(
     )
     if store is not None:
         store.upsert_project(cfg.project, objective=brief)
-        store.upsert_agent(name, project=cfg.project, team=MAIN_TEAM,
-                           name="main", role="main")
+        store.upsert_agent(name, project=cfg.project, team=MAIN_TEAM, name="main", role="main")
     return name
 
 
@@ -137,8 +136,12 @@ async def collect_snapshot(cfg: Config, client, store: Store | None = None) -> d
 
 
 async def watch_agent(
-    client, sandbox: str, interval: float = 1.0, lines: int = 80,
-    store: Store | None = None, agent_info: AgentInfo | None = None,
+    client,
+    sandbox: str,
+    interval: float = 1.0,
+    lines: int = 80,
+    store: Store | None = None,
+    agent_info: AgentInfo | None = None,
 ) -> None:
     """Emit newline-delimited JSON snapshots for an SSE bridge."""
     previous_log: str | None = None
@@ -228,8 +231,9 @@ def watch(sandbox: str, interval: float = 1.0, lines: int = 80):
     async def _watch(store: Store) -> None:
         agents = await Registry(client, cfg.project).list_agents()
         agent_info = next((a for a in agents if a.sandbox_name == sandbox), None)
-        await watch_agent(client, sandbox, interval=interval, lines=lines,
-                          store=store, agent_info=agent_info)
+        await watch_agent(
+            client, sandbox, interval=interval, lines=lines, store=store, agent_info=agent_info
+        )
 
     try:
         with Store() as store:
@@ -245,10 +249,17 @@ def send(sandbox: str, message: str):
     _require_project_sandbox(cfg, sandbox)
     message_id = asyncio.run(monitor.send_message(_client(cfg), sandbox, message))
     with Store() as store:
-        store.insert_messages([{
-            "id": message_id, "sandbox": sandbox, "role": "user",
-            "body": message, "at": datetime.now(UTC).isoformat(),
-        }])
+        store.insert_messages(
+            [
+                {
+                    "id": message_id,
+                    "sandbox": sandbox,
+                    "role": "user",
+                    "body": message,
+                    "at": datetime.now(UTC).isoformat(),
+                }
+            ]
+        )
     typer.echo(json.dumps({"sent": True, "id": message_id}))
 
 
@@ -276,7 +287,7 @@ def _sweep_project_pods(name_prefix: str) -> list[str]:
 
         rp.api_key = api_key
         return sweep_pods(rp, name_prefix)
-    except Exception:
+    except Exception:  # noqa: BLE001 -- cleanup must survive inconsistent SDK errors.
         return []
 
 

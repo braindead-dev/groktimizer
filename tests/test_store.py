@@ -27,10 +27,12 @@ def test_project_lifecycle(store):
 
 
 def test_agent_lifecycle(store):
-    store.upsert_agent("gtz-demo-attn-impl1", project="demo", team="attn",
-                       name="impl1", role="implementer")
-    store.upsert_agent("gtz-demo-attn-impl1", project="demo", team="attn",
-                       name="impl1", role="implementer")
+    store.upsert_agent(
+        "gtz-demo-attn-impl1", project="demo", team="attn", name="impl1", role="implementer"
+    )
+    store.upsert_agent(
+        "gtz-demo-attn-impl1", project="demo", team="attn", name="impl1", role="implementer"
+    )
     agents = store.list_agents("demo")
     assert len(agents) == 1
     store.mark_agent_terminated("gtz-demo-attn-impl1")
@@ -39,8 +41,20 @@ def test_agent_lifecycle(store):
 
 def test_messages_dedup_and_order(store):
     rows = [
-        {"id": "steer-1", "sandbox": "sb", "role": "user", "body": "hi", "at": "2026-01-01T00:00:00"},
-        {"id": "reply-1", "sandbox": "sb", "role": "agent", "body": "yo", "at": "2026-01-01T00:00:01"},
+        {
+            "id": "steer-1",
+            "sandbox": "sb",
+            "role": "user",
+            "body": "hi",
+            "at": "2026-01-01T00:00:00",
+        },
+        {
+            "id": "reply-1",
+            "sandbox": "sb",
+            "role": "agent",
+            "body": "yo",
+            "at": "2026-01-01T00:00:01",
+        },
     ]
     assert store.insert_messages(rows) == 2
     assert store.insert_messages(rows) == 0  # dedup by id
