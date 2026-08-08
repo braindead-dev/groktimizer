@@ -100,3 +100,20 @@ async def test_snapshot_ingests_into_store(tmp_path):
         assert store.list_projects()[0]["name"] == "demo"
         assert store.list_agents("demo")[0]["sandbox"] == "gtz-demo-hq-main"
         assert store.messages_for("gtz-demo-hq-main")[0]["id"] == "steer-9"
+
+
+async def test_snapshot_marks_vanished_agents_terminated(tmp_path):
+    from groktimizer.core.store import Store
+
+    client = FakeSandboxClient()
+    await client.create("gtz-demo-hq-main", "img", "r",
+                        agent_labels("demo", "hq", "main", "main"), {})
+    client.exec_responses["wc -c"] = ExecResult(stdout="0", exit_code=0)
+    cfg = Config(project="demo", shared_repo="git@x:y.git", tooling_repo="https://g/o/r.git")
+    with Store(tmp_path / "gtz.db") as store:
+        store.upsert_agent("gtz-demo-attn-dead1", project="demo", team="attn",
+                           name="dead1", role="implementer")
+        await collect_snapshot(cfg, client, store)
+        rows = {a["sandbox"]: a["terminated_at"] for a in store.list_agents("demo")}
+        assert rows["gtz-demo-attn-dead1"] is not None   # vanished -> terminated
+        assert rows["gtz-demo-hq-main"] is None          # live -> untouched

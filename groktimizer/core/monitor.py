@@ -76,12 +76,15 @@ async def send_message(client: SandboxClient, name: str, message: str) -> str:
         "export GIT_ASKPASS=/opt/gtz/git-askpass.sh GIT_TERMINAL_PROMPT=0; "
         "cd /workspace/project; "
         'reply_file=$(mktemp /tmp/gtz-reply.XXXXXX); '
+        # The trap also fires when the NEXT steering message kills this session,
+        # so an interrupted turn still lands its partial output as a chat reply
+        # instead of vanishing (a rapid message burst previously yielded nothing).
+        f'trap \'python3 -c {shlex.quote(_APPEND_REPLY_PY)} "$reply_file"; '
+        'rm -f "$reply_file"\' EXIT HUP TERM; '
         "grok --continue --always-approve "
         '${GTZ_GROK_MODEL:+--model "$GTZ_GROK_MODEL"} '
         '${GTZ_REASONING_EFFORT:+--reasoning-effort "$GTZ_REASONING_EFFORT"} '
-        f'-p "$0" 2>&1 | tee -a {LOG} > "$reply_file"; '
-        f'python3 -c {shlex.quote(_APPEND_REPLY_PY)} "$reply_file"; '
-        'rm -f "$reply_file"'
+        f'-p "$0" 2>&1 | tee -a {LOG} > "$reply_file"'
     )
     resume = shlex.join(["bash", "-lc", script, message])
     message_id = f"steer-{uuid4().hex}"

@@ -79,8 +79,10 @@ async def start_main_orchestrator(
 async def collect_snapshot(cfg: Config, client, store: Store | None = None) -> dict:
     """Return a JSON-safe control-plane snapshot for operator UIs.
 
-    When a store is given, the snapshot poll doubles as the ingestion heartbeat:
-    project/agent rows are upserted and new chat + log deltas are persisted.
+    The store is the durable record: the snapshot poll registers live sandboxes
+    into it, ingests chat + log deltas, and marks agents whose sandbox has
+    disappeared as terminated. Blaxel only answers "what is alive right now";
+    an agent's code lives in the shared repo, linked by its branch pointer.
     """
     agents = await Registry(client, cfg.project).list_agents()
     if store is not None:
@@ -89,6 +91,10 @@ async def collect_snapshot(cfg: Config, client, store: Store | None = None) -> d
             *(ingest_agent(store, client, agent) for agent in agents),
             return_exceptions=True,
         )
+        live = {agent.sandbox_name for agent in agents}
+        for row in store.list_agents(cfg.project):
+            if row["terminated_at"] is None and row["sandbox"] not in live:
+                store.mark_agent_terminated(row["sandbox"])
     status_results = await asyncio.gather(
         *(monitor.agent_status(client, agent.sandbox_name) for agent in agents),
         return_exceptions=True,
