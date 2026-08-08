@@ -1,4 +1,5 @@
 """Sandbox naming, labels, and the client protocol all Blaxel access goes through."""
+
 import re
 from dataclasses import dataclass, field
 from typing import Literal, Protocol
@@ -29,8 +30,22 @@ def sandbox_name(project: str, team: str, agent: str) -> str:
     return f"gtz-{project}-{team}-{agent}"
 
 
+def branch_name(team: str, agent: str, role: Role) -> str:
+    """Return the durable Git branch owned by one sandbox role."""
+    if role in ("main", "reconciler"):
+        return "main"
+    if role == "team":
+        return f"team/{team}"
+    return f"agent/{team}/{agent}"
+
+
 def agent_labels(project: str, team: str, agent: str, role: Role) -> dict[str, str]:
-    return {"gtz-project": project, "gtz-team": team, "gtz-agent": agent, "gtz-role": role}
+    return {
+        "gtz-project": project,
+        "gtz-team": team,
+        "gtz-agent": agent,
+        "gtz-role": role,
+    }
 
 
 @dataclass
@@ -46,8 +61,14 @@ class ExecResult:
 
 
 class SandboxClient(Protocol):
-    async def create(self, name: str, image: str, region: str,
-                     labels: dict[str, str], envs: dict[str, str]) -> None: ...
+    async def create(
+        self,
+        name: str,
+        image: str,
+        region: str,
+        labels: dict[str, str],
+        envs: dict[str, str],
+    ) -> None: ...
     async def delete(self, name: str) -> None: ...
     async def list(self, labels: dict[str, str]) -> list[SandboxMeta]: ...
     async def exec(self, name: str, command: str, timeout_s: int = 120) -> ExecResult: ...

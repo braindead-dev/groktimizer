@@ -1,4 +1,5 @@
 """Role prompt templates rendered into each agent's kickoff brief."""
+
 from importlib import resources
 
 from groktimizer.config import Config

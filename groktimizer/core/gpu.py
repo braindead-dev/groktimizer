@@ -1,10 +1,14 @@
 # groktimizer/core/gpu.py
 """RunPod wrapper enforcing project GPU budget: allowlist, concurrency, spend ceiling, lifetime."""
+
 import json
-from datetime import datetime, timezone
+import logging
+from datetime import UTC, datetime
 from pathlib import Path
 
 from groktimizer.config import Budget
+
+logger = logging.getLogger(__name__)
 
 
 class BudgetError(Exception):
@@ -12,7 +16,7 @@ class BudgetError(Exception):
 
 
 def _now() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 class BudgetedRunPod:
@@ -75,10 +79,10 @@ class BudgetedRunPod:
     def terminate(self, pod_id: str) -> None:
         try:
             self.rp.terminate_pod(pod_id)
-        except Exception:
+        except Exception:  # noqa: BLE001 -- RunPod exposes inconsistent SDK exception types.
             # The pod may already be gone on RunPod's side; settle the ledger anyway
             # so a dead entry can't accrue cost forever and eat the ceiling.
-            pass
+            logger.warning("RunPod could not terminate pod %s; settling its ledger entry", pod_id)
         entry = self.ledger["live"].pop(pod_id, None)
         if entry:
             self.ledger["completed_usd"] += self._accrued(entry)
@@ -86,10 +90,7 @@ class BudgetedRunPod:
 
     def reap_expired(self) -> list[str]:
         limit = self.budget.max_pod_lifetime_hours
-        expired = [
-            pid for pid, e in self.ledger["live"].items()
-            if self._age_hours(e) > limit
-        ]
+        expired = [pid for pid, e in self.ledger["live"].items() if self._age_hours(e) > limit]
         for pid in expired:
             self.terminate(pid)
         return expired

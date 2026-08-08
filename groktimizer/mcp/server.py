@@ -1,4 +1,5 @@
 """MCP server every agent runs; tools are gated by the agent's own role."""
+
 import os
 from pathlib import Path
 
@@ -25,13 +26,16 @@ def check_spawn(*, actor_role: Role, actor_team: str, target_role: Role, target_
         return
     if actor_role == "team":
         if target_role != "implementer" or target_team != actor_team:
-            raise PermissionError_("team orchestrators may only spawn implementers in their own team")
+            raise PermissionError_(
+                "team orchestrators may only spawn implementers in their own team"
+            )
         return
     raise PermissionError_("implementers and the reconciler may not spawn agents")
 
 
-def check_manage(*, actor_role: Role, actor_team: str, target_team: str,
-                 readonly: bool = False) -> None:
+def check_manage(
+    *, actor_role: Role, actor_team: str, target_team: str, readonly: bool = False
+) -> None:
     if actor_role == "main":
         return
     if actor_role == "team" and target_team == actor_team:
@@ -42,8 +46,9 @@ def check_manage(*, actor_role: Role, actor_team: str, target_team: str,
 
 
 def build_server() -> FastMCP:
-    from groktimizer.core.blaxel_client import BlaxelSandboxClient
     import runpod as rp
+
+    from groktimizer.core.blaxel_client import BlaxelSandboxClient
 
     cfg = Config.model_validate_json(os.environ["GTZ_CONFIG_JSON"])
     role: Role = os.environ["GTZ_ROLE"]  # type: ignore[assignment]
@@ -60,7 +65,9 @@ def build_server() -> FastMCP:
         # in team/agent names, and management is confined to this project's prefix.
         prefix = f"gtz-{cfg.project}-"
         if not sandbox.startswith(prefix):
-            raise PermissionError_(f"{sandbox!r} is not an agent sandbox of project {cfg.project!r}")
+            raise PermissionError_(
+                f"{sandbox!r} is not an agent sandbox of project {cfg.project!r}"
+            )
         return sandbox.removeprefix(prefix).split("-")[0]
 
     @mcp.tool()
@@ -80,12 +87,18 @@ def build_server() -> FastMCP:
         new team name creates that team (main orchestrator only)."""
         validate_name("team", team)
         validate_name("agent", agent)
-        check_spawn(actor_role=role, actor_team=my_team,
-                    target_role=role_, target_team=team)  # type: ignore[arg-type]
+        check_spawn(actor_role=role, actor_team=my_team, target_role=role_, target_team=team)  # type: ignore[arg-type]
         await registry.ensure_can_spawn(role_, team, cfg.caps, agent=agent)  # type: ignore[arg-type]
         envs = {k: v for k in PASSTHROUGH_ENVS if (v := os.environ.get(k))}
-        return await spawn_agent(cfg, client, team=team, agent=agent,
-                                 role=role_, brief=brief, extra_envs=envs)  # type: ignore[arg-type]
+        return await spawn_agent(
+            cfg,
+            client,
+            team=team,
+            agent=agent,
+            role=role_,
+            brief=brief,
+            extra_envs=envs,
+        )  # type: ignore[arg-type]
 
     @mcp.tool()
     async def dispatch_reconciler(brief: str) -> str:
@@ -100,21 +113,36 @@ def build_server() -> FastMCP:
         if any(a.agent == "reconciler" for a in existing):
             raise PermissionError_("a reconciler is already running; monitor it instead")
         envs = {k: v for k in PASSTHROUGH_ENVS if (v := os.environ.get(k))}
-        return await spawn_agent(cfg, client, team=MAIN_TEAM, agent="reconciler",
-                                 role="reconciler", brief=brief, extra_envs=envs)
+        return await spawn_agent(
+            cfg,
+            client,
+            team=MAIN_TEAM,
+            agent="reconciler",
+            role="reconciler",
+            brief=brief,
+            extra_envs=envs,
+        )
 
     @mcp.tool()
     async def agent_status(sandbox: str) -> dict:
         """Check whether a subordinate's grok session is alive and when it last logged."""
-        check_manage(actor_role=role, actor_team=my_team, target_team=_team_of(sandbox),
-                     readonly=True)
+        check_manage(
+            actor_role=role,
+            actor_team=my_team,
+            target_team=_team_of(sandbox),
+            readonly=True,
+        )
         return await monitor.agent_status(client, sandbox)
 
     @mcp.tool()
     async def tail_agent(sandbox: str, lines: int = 50) -> str:
         """Read the last N lines of a subordinate's session log."""
-        check_manage(actor_role=role, actor_team=my_team, target_team=_team_of(sandbox),
-                     readonly=True)
+        check_manage(
+            actor_role=role,
+            actor_team=my_team,
+            target_team=_team_of(sandbox),
+            readonly=True,
+        )
         return await monitor.tail_log(client, sandbox, lines)
 
     @mcp.tool()
@@ -146,8 +174,12 @@ def build_server() -> FastMCP:
     def list_pods() -> dict:
         """List live pods, current spend, and reap over-lifetime pods."""
         reaped = gpus.reap_expired()
-        return {"live": gpus.ledger["live"], "spend_usd": gpus.current_spend_usd(),
-                "reaped": reaped, "ceiling_usd": cfg.budget.spend_ceiling_usd}
+        return {
+            "live": gpus.ledger["live"],
+            "spend_usd": gpus.current_spend_usd(),
+            "reaped": reaped,
+            "ceiling_usd": cfg.budget.spend_ceiling_usd,
+        }
 
     @mcp.tool()
     def terminate_pod(pod_id: str) -> str:

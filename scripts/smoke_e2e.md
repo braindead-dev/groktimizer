@@ -20,8 +20,9 @@
 
 - **grok headless auth**: `XAI_API_KEY` env alone is enough — `grok --always-approve -p
   "Reply with exactly: AUTH-OK"` returned `AUTH-OK`, no OAuth screen.
-- **Models**: `grok models` lists grok-4.5 (500k ctx, most capable), grok-4.3 (1M ctx,
-  reconciler default), grok-4.20 variants (1M), grok-build-0.1 (256k). `-m/--model` works.
+- **Models**: `grok models` lists grok-4.5 (500k ctx, most capable), grok-4.3 (1M ctx),
+  grok-4.20 variants (1M), and grok-build-0.1 (256k). All autoresearch roles are pinned
+  to grok-4.5 with high reasoning; `-m/--model` works.
 - **MCP integration end-to-end**: groktimizer sdist installed in the sandbox,
   `grok mcp add groktimizer -- python3 -m groktimizer.mcp` → `grok mcp doctor` reports
   handshake OK, 12 tools discovered; a headless grok run called `list_agents` and got the

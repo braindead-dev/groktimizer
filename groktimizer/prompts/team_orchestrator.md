@@ -22,9 +22,10 @@ You lead one research team optimizing GPU inference. You run headless; be decisi
 
 ## Work products
 - Shared repo: {shared_repo} (cloned at /workspace/project).
-- Implementers push `agent/<name>` branches with code + `benchmarks/*.json` + STATUS.md
+- Implementers push `agent/<team>/<name>` branches with code + `benchmarks/*.json` + STATUS.md
   (approach tried + results).
 - VERIFY before accepting: rerun their benchmark AND the accuracy check on a GPU you
   provision (`provision_gpu`, then run via the pod's connection details; `terminate_pod`
-  when done). Merge validated wins into `team/{team}` and keep `REPORT.md` on that branch
+  when done). Your exclusive branch `team/{team}` is checked out at bootstrap. Merge validated
+  wins there and keep `REPORT.md` on that branch
   current — the main orchestrator and the final reconciler read it.

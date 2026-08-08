@@ -1,5 +1,6 @@
 # tests/test_registry.py
 import pytest
+
 from groktimizer.config import Caps
 from groktimizer.core.registry import AgentInfo, CapExceededError, Registry
 from groktimizer.core.sandbox import agent_labels, sandbox_name
@@ -7,8 +8,13 @@ from tests.fakes import FakeSandboxClient
 
 
 async def seed(client, project, team, agent, role):
-    await client.create(sandbox_name(project, team, agent), "img", "r",
-                        agent_labels(project, team, agent, role), {})
+    await client.create(
+        sandbox_name(project, team, agent),
+        "img",
+        "r",
+        agent_labels(project, team, agent, role),
+        {},
+    )
 
 
 @pytest.fixture

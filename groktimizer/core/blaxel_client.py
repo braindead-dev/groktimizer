@@ -1,4 +1,5 @@
 """The one module that touches the Blaxel SDK. Everything else uses SandboxClient."""
+
 from blaxel.core import SandboxInstance
 
 from groktimizer.core.sandbox import ExecResult, SandboxMeta
@@ -9,14 +10,16 @@ class BlaxelSandboxClient:
         self.region = region
 
     async def create(self, name, image, region, labels, envs):
-        await SandboxInstance.create_if_not_exists({
-            "name": name,
-            "image": image,
-            "memory": 4096,
-            "region": region or self.region,
-            "labels": labels,
-            "envs": [{"name": k, "value": v} for k, v in envs.items()],
-        })
+        await SandboxInstance.create_if_not_exists(
+            {
+                "name": name,
+                "image": image,
+                "memory": 4096,
+                "region": region or self.region,
+                "labels": labels,
+                "envs": [{"name": k, "value": v} for k, v in envs.items()],
+            }
+        )
 
     async def delete(self, name):
         await SandboxInstance.delete(name)
@@ -34,11 +37,13 @@ class BlaxelSandboxClient:
 
     async def exec(self, name, command, timeout_s=120):
         sb = await SandboxInstance.get(name)
-        r = await sb.process.exec({
-            "command": command,
-            "wait_for_completion": True,
-            "timeout": timeout_s * 1000,
-        })
+        r = await sb.process.exec(
+            {
+                "command": command,
+                "wait_for_completion": True,
+                "timeout": timeout_s * 1000,
+            }
+        )
         stdout = r.logs if isinstance(getattr(r, "logs", None), str) else None
         if stdout is None:
             stdout = getattr(r, "stdout", "") or ""

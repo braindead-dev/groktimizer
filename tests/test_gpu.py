@@ -1,11 +1,11 @@
 # tests/test_gpu.py
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
 
 from groktimizer.config import Budget
-from groktimizer.core.gpu import BudgetError, BudgetedRunPod
+from groktimizer.core.gpu import BudgetedRunPod, BudgetError
 
 GPU = "NVIDIA GeForce RTX 4090"
 
@@ -74,9 +74,7 @@ def test_reap_expired(rp, tmp_path):
     b = mk(rp, tmp_path, max_pod_lifetime_hours=1.0)
     pod = b.provision("a", "img", GPU)
     # backdate the pod 2 hours in the ledger
-    b.ledger["live"][pod["id"]]["started_at"] = (
-        datetime.now(timezone.utc) - timedelta(hours=2)
-    ).isoformat()
+    b.ledger["live"][pod["id"]]["started_at"] = (datetime.now(UTC) - timedelta(hours=2)).isoformat()
     b.save()
     reaped = b.reap_expired()
     assert reaped == [pod["id"]]
@@ -95,8 +93,13 @@ def test_terminate_settles_ledger_when_pod_already_gone(rp, tmp_path):
 
 def test_ceiling_accounts_for_live_pods_full_lifetime(rp, tmp_path):
     # 0.60/hr * 2h = 1.20 per pod; ceiling 2.0 fits one pod's worst case, not two
-    b = mk(rp, tmp_path, spend_ceiling_usd=2.0, max_pod_lifetime_hours=2.0,
-           max_concurrent_pods=5)
+    b = mk(
+        rp,
+        tmp_path,
+        spend_ceiling_usd=2.0,
+        max_pod_lifetime_hours=2.0,
+        max_concurrent_pods=5,
+    )
     b.provision("a", "img", GPU)
     with pytest.raises(BudgetError, match="ceiling"):
         b.provision("b", "img", GPU)

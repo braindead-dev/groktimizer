@@ -1,11 +1,13 @@
 """Project configuration: caps, budgets, sandbox defaults."""
+
 import tomllib
 from pathlib import Path
+
 from pydantic import BaseModel
 
 
 class Caps(BaseModel):
-    max_teams: int = 10
+    max_teams: int = 3
     max_agents_per_team: int = 5
 
 
@@ -17,14 +19,17 @@ class Budget(BaseModel):
 
 
 class Research(BaseModel):
-    target_gain_pct: float = 5.0        # min perf gain orchestrators should accept
+    target_gain_pct: float = 5.0  # min perf gain orchestrators should accept
     max_accuracy_loss_pct: float = 5.0  # max model-quality regression tolerated
     benchmark_cmd: str = "python3 bench/benchmark.py"  # run in shared repo; prints metrics JSON
-    accuracy_cmd: str = "python3 bench/accuracy.py"    # run in shared repo; prints accuracy metric
-    # Final reconciler runs on the largest-context model so it can hold every team's
-    # reports/branches at once. Live-checked 2026-08-08: grok-4.3 = newest 1M-token
-    # model (grok-4.5 is smarter but only 500k). "" = grok CLI default.
-    reconciler_model: str = "grok-4.3"
+    accuracy_cmd: str = "python3 bench/accuracy.py"  # run in shared repo; prints accuracy metric
+    # Pin roles instead of relying on the API-key default model. Live verification
+    # found that the default non-reasoning model can end an agentic tool loop with
+    # no visible response, while these explicit reasoning-capable models are stable.
+    orchestrator_model: str = "grok-4.5"
+    implementer_model: str = "grok-4.5"
+    reconciler_model: str = "grok-4.5"
+    reasoning_effort: str = "high"
 
 
 class Config(BaseModel):

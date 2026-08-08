@@ -1,4 +1,5 @@
 """In-memory SandboxClient fake shared across test modules."""
+
 from groktimizer.core.sandbox import ExecResult, SandboxMeta
 
 
@@ -16,8 +17,11 @@ class FakeSandboxClient:
         self.sandboxes.pop(name, None)
 
     async def list(self, labels):
-        return [m for m in self.sandboxes.values()
-                if all(m.labels.get(k) == v for k, v in labels.items())]
+        return [
+            m
+            for m in self.sandboxes.values()
+            if all(m.labels.get(k) == v for k, v in labels.items())
+        ]
 
     async def exec(self, name, command, timeout_s=120):
         self.execs.append((name, command))

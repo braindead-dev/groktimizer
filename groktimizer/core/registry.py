@@ -1,5 +1,6 @@
 # groktimizer/core/registry.py
 """Live agent registry: Blaxel sandbox labels are the source of truth."""
+
 from dataclasses import dataclass
 
 from groktimizer.config import Caps
@@ -44,8 +45,9 @@ class Registry:
         agents = await self.list_agents()
         return sorted({a.team for a in agents} - {MAIN_TEAM})
 
-    async def ensure_can_spawn(self, role: Role, team: str, caps: Caps,
-                               agent: str | None = None) -> None:
+    async def ensure_can_spawn(
+        self, role: Role, team: str, caps: Caps, agent: str | None = None
+    ) -> None:
         if role == "main":
             raise CapExceededError("the main orchestrator is spawned by the CLI, not by agents")
         teams = await self.list_teams()
