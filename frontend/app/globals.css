@@ -533,7 +533,7 @@ button:disabled {
   align-items: center;
   justify-content: center;
   margin: 0 auto;
-  padding: clamp(104px, 15vh, 140px) 0 0;
+  padding: clamp(128px, 18vh, 168px) 0 0;
   text-align: center;
 }
 
@@ -660,7 +660,8 @@ textarea::placeholder { color: #a6a89f; }
   height: auto;
   display: flex;
   flex-direction: column;
-  justify-content: space-between;
+  justify-content: flex-start;
+  gap: 10px;
   padding: 14px 15px;
   border-radius: 10px;
   background: #ededE7;
@@ -674,13 +675,14 @@ textarea::placeholder { color: #a6a89f; }
 .recent-project footer {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-start;
+  gap: 3px;
   color: var(--muted);
   font-size: 9px;
 }
 
 .recent-project-top > strong { color: var(--ink); font-size: 12px; font-weight: 580; }
-.recent-project-top .status-pill { padding: 2px 7px; }
+.recent-project-top .status-pill { padding: 0; border-radius: 0; background: transparent; }
 .recent-project-objective {
   display: -webkit-box;
   overflow: hidden;
@@ -697,9 +699,9 @@ textarea::placeholder { color: #a6a89f; }
 .recent-project-1 .recent-project-top,
 .recent-project-1 footer,
 .recent-project-1 > div > p { color: rgba(255,255,255,.5); }
-.recent-project-1 .status-pill { background: rgba(255,255,255,.1); color: rgba(255,255,255,.8); }
+.recent-project-1 .status-pill { background: transparent; color: var(--muted); }
 
-.recent-project footer { padding-top: 8px; }
+.recent-project footer { padding-top: 0; }
 
 .delta-good { color: #3e9c35 !important; }
 .recent-project-1 .delta-good { color: #b9ee56 !important; }
@@ -1388,7 +1390,7 @@ textarea::placeholder { color: var(--muted-light); }
 
 @media (max-width: 760px) {
   .home-view { grid-template-rows: minmax(250px, 58%) minmax(170px, 42%); }
-  .launch-hero { width: calc(100% - 28px); min-height: 0; padding-top: 108px; }
+  .launch-hero { width: calc(100% - 28px); min-height: 0; padding-top: 128px; }
   .recent-runs { padding-left: 16px; padding-right: 16px; }
   .recent-grid { grid-template-columns: 1fr; }
   .recent-project { min-height: 0; }

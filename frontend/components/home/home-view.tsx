@@ -103,8 +103,11 @@ export function HomeView() {
                 <div className="recent-project-top"><strong>{project.shortName}</strong><StatusPill status={project.status} /></div>
                 <p className="recent-project-objective">{project.objective}</p>
                 <footer>
-                  <strong>{project.source === "live" ? active : project.best}<small>{project.source === "live" ? " active" : project.unit}</small></strong>
-                  <span>{project.source === "live" ? "agents" : project.metric}</span>
+                  {project.source === "live" ? (
+                    <strong>{active} active agents</strong>
+                  ) : (
+                    <><strong>{project.best}<small>{project.unit}</small></strong><span>{project.metric}</span></>
+                  )}
                 </footer>
               </button>
             );
