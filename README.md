@@ -52,12 +52,12 @@ Install stock [Grok Build](https://github.com/xai-org/grok-build) normally, then
 optimized model globally with one command:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/braindead-dev/groktimizer/main/install.sh | sh
+curl -fsSL https://groktimizer.com/install.sh | sh
 ```
 
 The installer probes the endpoint, backs up and safely updates `~/.grok/config.toml`, registers the
-model everywhere stock Grok Build discovers models, and selects `Groktimized 2` for new sessions.
-Afterward, launch normally with `grok`, switch with `/model Groktimized 2`, or use
+model everywhere stock Grok Build discovers models, and selects `🟣 Groktimized 2` for new sessions.
+Afterward, launch normally with `grok`, switch with `/model groktimized-2`, or use
 `grok -m groktimized-2`. Re-running the installer updates the managed entry without duplicating it.
 
 ### Web command center

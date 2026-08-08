@@ -23,7 +23,7 @@ LOCAL_HOSTS = {"127.0.0.1", "::1", "localhost"}
 DEFAULT_BASE_URL = "https://z08tqd2khleyx4-8000.proxy.runpod.net/v1"
 DEFAULT_MODEL = "groktimized-2"
 DEFAULT_ALIAS = "groktimized-2"
-DEFAULT_NAME = "Groktimized 2"
+DEFAULT_NAME = "🟣 Groktimized 2"
 LEGACY_ALIASES = ("groktimizer-fast",)
 MANAGED_DESCRIPTION = "Optimized Grok 2 deployment by Groktimizer"
 MANAGED_DESCRIPTIONS = {
@@ -313,7 +313,7 @@ def main() -> None:
     if config.make_default:
         print("Set as the default for new Grok Build sessions.")
     print("Open Grok Build normally: grok")
-    print(f"Switch anytime: /model {config.name}")
+    print(f"Switch anytime: /model {config.alias}")
 
 
 def launch_fast_model() -> None:

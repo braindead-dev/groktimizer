@@ -1,5 +1,6 @@
 import sys
 import tomllib
+from pathlib import Path
 
 import pytest
 
@@ -36,6 +37,7 @@ def test_install_preserves_config_and_is_idempotent(tmp_path):
     assert text.count(BEGIN_MARKER) == 1
     assert parsed["cli"]["installer"] == "internal"
     assert parsed["models"]["default"] == "groktimized-2"
+    assert parsed["model"]["groktimized-2"]["name"] == "Faster Grok"
     assert parsed["model"]["groktimized-2"]["base_url"] == "http://localhost:9000/v1"
     assert backup is not None and backup.exists()
     assert path.stat().st_mode & 0o777 == 0o600
@@ -90,6 +92,7 @@ def test_public_endpoint_requires_dedicated_key(monkeypatch):
 
     validate_auth(ModelConfig())
     assert ModelConfig().base_url == DEFAULT_BASE_URL
+    assert ModelConfig().name == "🟣 Groktimized 2"
 
 
 def test_install_can_preserve_existing_default(tmp_path):
@@ -155,3 +158,8 @@ def test_fast_model_launcher_loads_repo_env_and_execs_grok(tmp_path, monkeypatch
         "binary": "/bin/grok",
         "args": ["/bin/grok", "-m", "groktimized-2", "-p", "hello"],
     }
+
+
+def test_website_installer_matches_repository_installer():
+    root = Path(__file__).resolve().parents[1]
+    assert (root / "frontend/public/install.sh").read_bytes() == (root / "install.sh").read_bytes()
