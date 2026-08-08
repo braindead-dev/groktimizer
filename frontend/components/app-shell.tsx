@@ -1,6 +1,5 @@
 "use client";
 
-import { AnimatePresence, motion } from "motion/react";
 import { Menu, X } from "lucide-react";
 import { ActivityView } from "@/components/activity/activity-view";
 import { AgentWorkspace } from "@/components/agents/agent-workspace";
@@ -23,13 +22,12 @@ function findAgent(project: Project, agentId: string): Agent | undefined {
 function SelectionView() {
   const { projects, selection } = useResearchState();
 
-  if (selection.type === "home") return <HomeView mode="home" />;
-  if (selection.type === "new-project") return <HomeView mode="new-project" />;
+  if (selection.type === "home") return <HomeView />;
   if (selection.type === "activity") return <ActivityView />;
 
   const project = projects.find((candidate) => candidate.id === selection.projectId) ?? projects[0];
 
-  if (!project) return <HomeView mode="home" />;
+  if (!project) return <HomeView />;
 
   if (selection.type === "project") return <ProjectOverview project={project} />;
 
@@ -63,18 +61,9 @@ export function AppShell() {
         />
       ) : null}
       <main className="main-stage">
-        <AnimatePresence mode="wait" initial={false}>
-          <motion.div
-            className="view-transition"
-            key={viewKey}
-            initial={{ opacity: 0, y: 5 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -3 }}
-            transition={{ duration: 0.18, ease: [0.22, 1, 0.36, 1] }}
-          >
-            <SelectionView />
-          </motion.div>
-        </AnimatePresence>
+        <div className="view-transition" key={viewKey}>
+          <SelectionView />
+        </div>
       </main>
     </div>
   );

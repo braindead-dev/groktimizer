@@ -1,16 +1,17 @@
 "use client";
 
-import { AnimatePresence, motion } from "motion/react";
+import type { PointerEvent as ReactPointerEvent } from "react";
 import {
   Activity,
   ChevronDown,
   ChevronRight,
-  CircleGauge,
   FlaskConical,
+  Folder,
   Hammer,
   Home,
   Network,
-  Plus,
+  PanelLeftClose,
+  PanelLeftOpen,
   Workflow,
 } from "lucide-react";
 import { BrandMark } from "@/components/shared/brand-mark";
@@ -74,19 +75,11 @@ function TeamBranch({ projectId, team }: { projectId: string; team: ResearchTeam
           <StatusDot status={team.orchestrator.status} />
         </button>
       </div>
-      <AnimatePresence initial={false}>
-        {expanded ? (
-          <motion.div
-            className="team-children"
-            initial={{ height: 0, opacity: 0 }}
-            animate={{ height: "auto", opacity: 1 }}
-            exit={{ height: 0, opacity: 0 }}
-            transition={{ duration: 0.18 }}
-          >
-            {team.agents.filter((agent) => agent.sandboxName).map((agent) => <AgentRow key={agent.id} projectId={projectId} agent={agent} />)}
-          </motion.div>
-        ) : null}
-      </AnimatePresence>
+      {expanded ? (
+        <div className="team-children">
+          {team.agents.filter((agent) => agent.sandboxName).map((agent) => <AgentRow key={agent.id} projectId={projectId} agent={agent} />)}
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -107,45 +100,38 @@ function ProjectBranch({ project }: { project: Project }) {
       <div className={`tree-row project-row ${selected ? "tree-row-selected" : ""}`}>
         {hasLiveAgents ? (
           <button
-            className="tree-disclosure"
+            className="project-leading-control"
             aria-label={`${expanded ? "Collapse" : "Expand"} ${project.name}`}
             onClick={() => dispatch({ type: "toggle-project", projectId: project.id })}
           >
-            {expanded ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
+            <Folder className="project-leading-icon" size={14} />
+            {expanded
+              ? <ChevronDown className="project-leading-chevron" size={13} />
+              : <ChevronRight className="project-leading-chevron" size={13} />}
           </button>
-        ) : <span className="tree-disclosure" />}
+        ) : <span className="project-leading-control"><Folder size={14} /></span>}
         <button
           className="tree-main-action"
           onClick={() => dispatch({ type: "select", selection: { type: "project", projectId: project.id } })}
         >
-          <CircleGauge size={14} />
           <span className="tree-label project-label">{project.shortName}</span>
           <StatusDot status={project.status} />
         </button>
       </div>
-      <AnimatePresence initial={false}>
-        {expanded && hasLiveAgents ? (
-          <motion.div
-            className="project-children"
-            initial={{ height: 0, opacity: 0 }}
-            animate={{ height: "auto", opacity: 1 }}
-            exit={{ height: 0, opacity: 0 }}
-            transition={{ duration: 0.2 }}
-          >
-            {project.orchestrator.sandboxName ? <AgentRow projectId={project.id} agent={project.orchestrator} /> : null}
-            {project.teams.map((team) => <TeamBranch key={team.id} projectId={project.id} team={team} />)}
-            {project.implementor.sandboxName ? <AgentRow projectId={project.id} agent={project.implementor} /> : null}
-          </motion.div>
-        ) : null}
-      </AnimatePresence>
+      {expanded && hasLiveAgents ? (
+        <div className="project-children">
+          {project.orchestrator.sandboxName ? <AgentRow projectId={project.id} agent={project.orchestrator} /> : null}
+          {project.teams.map((team) => <TeamBranch key={team.id} projectId={project.id} team={team} />)}
+          {project.implementor.sandboxName ? <AgentRow projectId={project.id} agent={project.implementor} /> : null}
+        </div>
+      ) : null}
     </div>
   );
 }
 
 export function ProjectSidebar() {
-  const { projects, selection, sidebarOpen, controlPlane } = useResearchState();
+  const { projects, selection, sidebarOpen, sidebarCollapsed, sidebarWidth } = useResearchState();
   const dispatch = useResearchDispatch();
-  const hasLiveProject = projects.some((project) => project.source === "live");
   const activeCount = projects.reduce(
     (count, project) => count + [
       project.orchestrator,
@@ -155,59 +141,76 @@ export function ProjectSidebar() {
     0,
   );
 
+  function beginResize(event: ReactPointerEvent<HTMLButtonElement>) {
+    if (sidebarCollapsed) return;
+    event.preventDefault();
+    const startX = event.clientX;
+    const startWidth = sidebarWidth;
+    event.currentTarget.setPointerCapture(event.pointerId);
+    const onMove = (moveEvent: PointerEvent) => {
+      dispatch({ type: "set-sidebar-width", width: startWidth + moveEvent.clientX - startX });
+    };
+    const onEnd = () => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onEnd);
+    };
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onEnd, { once: true });
+  }
+
   return (
-    <aside className={`sidebar ${sidebarOpen ? "sidebar-open" : ""}`}>
+    <aside
+      className={`sidebar ${sidebarOpen ? "sidebar-open" : ""} ${sidebarCollapsed ? "sidebar-collapsed" : ""}`}
+      style={{ "--sidebar-width": `${sidebarWidth}px` } as React.CSSProperties}
+    >
       <div className="sidebar-head">
         <button className="brand-button" onClick={() => dispatch({ type: "select", selection: { type: "home" } })}>
           <BrandMark />
           <span>groktimizer</span>
+        </button>
+        <button
+          className="sidebar-collapse-button"
+          aria-label={sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"}
+          title={sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"}
+          onClick={() => dispatch({ type: "toggle-sidebar-collapse" })}
+        >
+          {sidebarCollapsed ? <PanelLeftOpen size={15} /> : <PanelLeftClose size={15} />}
         </button>
       </div>
 
       <nav className="primary-nav" aria-label="Primary navigation">
         <button
           className={`nav-row ${selection.type === "home" ? "nav-row-active" : ""}`}
+          aria-label="Home"
+          title="Home"
           onClick={() => dispatch({ type: "select", selection: { type: "home" } })}
         >
-          <Home size={15} /> Home
+          <Home size={15} /> <span className="nav-label">Home</span>
         </button>
         <button
           className={`nav-row ${selection.type === "activity" ? "nav-row-active" : ""}`}
+          aria-label="Live runs"
+          title="Live runs"
           onClick={() => dispatch({ type: "select", selection: { type: "activity" } })}
         >
-          <Activity size={15} /> Live runs <span className="nav-count">{activeCount}</span>
+          <Activity size={15} /> <span className="nav-label">Live runs</span> <span className="nav-count">{activeCount}</span>
         </button>
-        {!hasLiveProject ? (
-          <button
-            className={`nav-row ${selection.type === "new-project" ? "nav-row-active" : ""}`}
-            onClick={() => dispatch({ type: "select", selection: { type: "new-project" } })}
-          >
-            <Plus size={15} /> New project
-          </button>
-        ) : null}
       </nav>
 
       <div className="sidebar-section-head">
         <span>Projects</span>
-        {!hasLiveProject ? (
-          <button className="icon-button mini" aria-label="Create project" onClick={() => dispatch({ type: "select", selection: { type: "new-project" } })}>
-            <Plus size={13} />
-          </button>
-        ) : null}
       </div>
       <div className="project-tree">
         {projects.map((project) => <ProjectBranch key={project.id} project={project} />)}
       </div>
 
-      <div className="sidebar-foot">
-        <div className="control-plane-summary">
-          <span className={`connection-indicator connection-indicator-${controlPlane.mode}`} aria-hidden="true" />
-          <span className="profile-copy">
-            <strong>{controlPlane.mode === "live" ? "Connected" : "Benchmark only"}</strong>
-            <small>{controlPlane.mode === "loading" ? "Connecting…" : controlPlane.mode === "live" ? controlPlane.project : "No live project"}</small>
-          </span>
-        </div>
-      </div>
+      <button
+        className="sidebar-resize-handle"
+        aria-label={sidebarCollapsed ? "Expand sidebar" : "Resize sidebar"}
+        title={sidebarCollapsed ? "Expand sidebar" : "Drag to resize sidebar"}
+        onClick={() => sidebarCollapsed && dispatch({ type: "toggle-sidebar-collapse" })}
+        onPointerDown={beginResize}
+      />
     </aside>
   );
 }

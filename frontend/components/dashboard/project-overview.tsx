@@ -34,7 +34,7 @@ export function ProjectOverview({ project }: { project: Project }) {
     setDeleteError(null);
     try {
       await deleteResearchProject(controlPlane.project);
-      dispatch({ type: "select", selection: { type: "new-project" } });
+      dispatch({ type: "select", selection: { type: "home" } });
       dispatch({ type: "refresh-control-plane" });
     } catch (error) {
       setDeleteError(error instanceof Error ? error.message : "Project deletion failed.");

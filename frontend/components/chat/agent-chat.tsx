@@ -1,7 +1,6 @@
 "use client";
 
 import { FormEvent, KeyboardEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { AnimatePresence, motion } from "motion/react";
 import {
   ArrowUp,
   Brain,
@@ -46,9 +45,9 @@ function toMessage(message: ChatMessage): Message {
 function MessageBlock({ message }: { message: Message }) {
   if (message.kind === "user") {
     return (
-      <motion.div className="chat-user-message" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}>
+      <div className="chat-user-message">
         <p>{message.body}</p><span>{message.time}</span>
-      </motion.div>
+      </div>
     );
   }
 
@@ -79,19 +78,15 @@ function MessageBlock({ message }: { message: Message }) {
   }
 
   return (
-    <motion.div className="chat-assistant-message" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}>
+    <div className="chat-assistant-message">
       <p>{message.body}</p><span>{message.time}</span>
-    </motion.div>
+    </div>
   );
 }
 
 function PendingBlock({ pending, onRetry }: { pending: PendingSend; onRetry: (pending: PendingSend) => void }) {
   return (
-    <motion.div
-      className={`chat-user-message chat-message-${pending.state}`}
-      initial={{ opacity: 0, y: 8 }}
-      animate={{ opacity: pending.state === "sending" ? 0.6 : 1, y: 0 }}
-    >
+    <div className={`chat-user-message chat-message-${pending.state}`}>
       <p>{pending.body}</p>
       {pending.state === "sending" ? (
         <span>sending…</span>
@@ -103,7 +98,7 @@ function PendingBlock({ pending, onRetry }: { pending: PendingSend; onRetry: (pe
           </button>
         </span>
       )}
-    </motion.div>
+    </div>
   );
 }
 
@@ -248,7 +243,7 @@ export function AgentChat({ project, agent }: { project: Project; agent: Agent }
       : stream.activity;
 
   useEffect(() => {
-    threadEnd.current?.scrollIntoView({ behavior: "smooth", block: "end" });
+    threadEnd.current?.scrollIntoView({ behavior: "auto", block: "end" });
   }, [thread.length, visiblePending.length, liveLog]);
 
   return (
@@ -295,13 +290,7 @@ export function AgentChat({ project, agent }: { project: Project; agent: Agent }
         )}
         <div ref={threadEnd} />
       </div>
-      <AnimatePresence>
-        {sending ? (
-          <motion.div className="thinking-indicator" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
-            <span /><span /><span /> agent is updating
-          </motion.div>
-        ) : null}
-      </AnimatePresence>
+      {sending ? <div className="thinking-indicator"><span /><span /><span /> agent is updating</div> : null}
       <Composer agent={agent} onSend={handleSend} />
     </section>
   );

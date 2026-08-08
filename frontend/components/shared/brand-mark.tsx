@@ -13,13 +13,12 @@ export function BrandLockup() {
     <div className="brand-lockup" aria-label="Groktimizer">
       <Image
         className="brand-wordmark-image"
-        src="/brand/grok-wordmark.png"
+        src="/brand/groktimizer.svg"
         alt=""
-        width={302}
-        height={112}
+        width={612}
+        height={64}
         priority
       />
-      <span>timizer</span>
     </div>
   );
 }

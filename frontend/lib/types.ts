@@ -71,7 +71,6 @@ export interface Project {
 
 export type ViewSelection =
   | { type: "home" }
-  | { type: "new-project" }
   | { type: "activity" }
   | { type: "project"; projectId: string }
   | { type: "agent"; projectId: string; agentId: string };

@@ -1,6 +1,5 @@
 "use client";
 
-import { AnimatePresence, motion } from "motion/react";
 import { AgentChat } from "@/components/chat/agent-chat";
 import { IntelligencePanel } from "@/components/intelligence/intelligence-panel";
 import type { Agent, Project, ResearchTeam } from "@/lib/types";
@@ -21,19 +20,11 @@ export function AgentWorkspace({ project, agent }: { project: Project; agent: Ag
         project={project}
         agent={agent}
       />
-      <AnimatePresence initial={false}>
-        {detailOpen ? (
-          <motion.div
-            className="intelligence-column"
-            initial={{ opacity: 0, x: 18 }}
-            animate={{ opacity: 1, x: 0 }}
-            exit={{ opacity: 0, x: 18 }}
-            transition={{ duration: 0.2 }}
-          >
-            <IntelligencePanel project={project} agent={agent} team={team} />
-          </motion.div>
-        ) : null}
-      </AnimatePresence>
+      {detailOpen ? (
+        <div className="intelligence-column">
+          <IntelligencePanel project={project} agent={agent} team={team} />
+        </div>
+      ) : null}
     </div>
   );
 }

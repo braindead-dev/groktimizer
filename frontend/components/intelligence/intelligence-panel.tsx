@@ -1,7 +1,6 @@
 "use client";
 
 import { useState } from "react";
-import { AnimatePresence, motion } from "motion/react";
 import {
   Activity,
   ChevronRight,
@@ -67,9 +66,8 @@ function ProjectControl({ project }: { project: Project }) {
         <button className={tab === "map" ? "active" : ""} onClick={() => setTab("map")}><Network size={13} /> System map</button>
         <button className={tab === "registry" ? "active" : ""} onClick={() => setTab("registry")}><Activity size={13} /> Registry</button>
       </div>
-      <AnimatePresence mode="wait" initial={false}>
-        {tab === "map" ? (
-          <motion.div key="map" className="control-scroll" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
+      {tab === "map" ? (
+          <div className="control-scroll">
             <div className="system-metrics">
               <div><span>Agents</span><strong>{agents.length}</strong></div>
               <div><span>Running</span><strong>{active.length}</strong></div>
@@ -107,17 +105,16 @@ function ProjectControl({ project }: { project: Project }) {
                 ) : null}
               </div>
             </div>
-          </motion.div>
+          </div>
         ) : (
-          <motion.div key="registry" className="control-scroll registry-view" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
+          <div className="control-scroll registry-view">
             <div className="subsection-title"><span>Agents</span><small>{agents.length} total</small></div>
             <div className="registry-list">
               {agents.map((agent) => <RegistryRow key={agent.id} project={project} agent={agent} scope={agent.role} />)}
               {!agents.length ? <div className="live-empty-state"><Radio size={17} /><strong>No agents yet</strong><span>Launch a project to create the orchestrator.</span></div> : null}
             </div>
-          </motion.div>
+          </div>
         )}
-      </AnimatePresence>
     </PanelShell>
   );
 }

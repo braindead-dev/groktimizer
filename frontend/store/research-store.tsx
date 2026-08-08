@@ -20,6 +20,8 @@ interface ResearchState {
   expandedProjects: string[];
   expandedTeams: string[];
   sidebarOpen: boolean;
+  sidebarCollapsed: boolean;
+  sidebarWidth: number;
   detailOpen: boolean;
   controlPlane: ControlPlaneState;
   controlPlaneRevision: number;
@@ -30,6 +32,8 @@ type Action =
   | { type: "toggle-project"; projectId: string }
   | { type: "toggle-team"; teamId: string }
   | { type: "toggle-sidebar" }
+  | { type: "toggle-sidebar-collapse" }
+  | { type: "set-sidebar-width"; width: number }
   | { type: "toggle-detail" }
   | { type: "close-sidebar" }
   | { type: "hydrate-control-plane"; snapshot: ControlPlaneSnapshot; baseline: BaselineSnapshot }
@@ -43,6 +47,8 @@ const initialState: ResearchState = {
   expandedProjects: [],
   expandedTeams: [],
   sidebarOpen: false,
+  sidebarCollapsed: false,
+  sidebarWidth: 268,
   detailOpen: true,
   controlPlane: { mode: "loading" },
   controlPlaneRevision: 0,
@@ -145,9 +151,9 @@ function normalizeLiveAgent(source: LiveAgentSnapshot, referenceTime: number): A
         ? "implementor"
         : "researcher";
   const name = source.role === "main"
-    ? "Project orchestrator"
+    ? "Orchestrator"
     : source.role === "team"
-      ? `${humanize(source.team)} orchestrator`
+      ? humanize(source.team)
       : source.role === "reconciler"
         ? "Final reconciler"
         : humanize(source.agent);
@@ -182,7 +188,7 @@ function projectFromSnapshot(snapshot: ControlPlaneSnapshot, baseline: BaselineS
   }));
   const main = agents.find(({ source }) => source.role === "main")?.normalized ?? placeholderAgent(
     `live-${snapshot.project}-orchestrator`,
-    "Project orchestrator",
+    "Orchestrator",
     "orchestrator",
     "Waiting for the main sandbox",
   );
@@ -200,7 +206,7 @@ function projectFromSnapshot(snapshot: ControlPlaneSnapshot, baseline: BaselineS
     const members = agents.filter(({ source }) => source.team === teamName);
     const orchestrator = members.find(({ source }) => source.role === "team")?.normalized ?? placeholderAgent(
       `live-${snapshot.project}-${teamName}-orchestrator`,
-      `${humanize(teamName)} orchestrator`,
+      humanize(teamName),
       "team-orchestrator",
       "Waiting for the team sandbox",
     );
@@ -240,6 +246,10 @@ function reducer(state: ResearchState, action: Action): ResearchState {
       return { ...state, expandedTeams: toggleInList(state.expandedTeams, action.teamId) };
     case "toggle-sidebar":
       return { ...state, sidebarOpen: !state.sidebarOpen };
+    case "toggle-sidebar-collapse":
+      return { ...state, sidebarCollapsed: !state.sidebarCollapsed };
+    case "set-sidebar-width":
+      return { ...state, sidebarWidth: Math.min(400, Math.max(208, Math.round(action.width))) };
     case "toggle-detail":
       return { ...state, detailOpen: !state.detailOpen };
     case "close-sidebar":
@@ -283,9 +293,7 @@ function reducer(state: ResearchState, action: Action): ResearchState {
         return {
           ...state,
           projects: [baseline],
-          selection: state.selection.type === "home" || state.selection.type === "new-project"
-            ? state.selection
-            : { type: "new-project" },
+          selection: { type: "home" },
           expandedProjects: [],
           expandedTeams: [],
           controlPlane: {
@@ -322,6 +330,18 @@ const DispatchContext = createContext<Dispatch<Action> | null>(null);
 
 export function ResearchStoreProvider({ children }: { children: ReactNode }) {
   const [state, dispatch] = useReducer(reducer, initialState);
+
+  useEffect(() => {
+    const savedWidth = Number(window.localStorage.getItem("groktimizer-sidebar-width"));
+    const savedCollapsed = window.localStorage.getItem("groktimizer-sidebar-collapsed");
+    if (Number.isFinite(savedWidth)) dispatch({ type: "set-sidebar-width", width: savedWidth });
+    if (savedCollapsed === "true") dispatch({ type: "toggle-sidebar-collapse" });
+  }, []);
+
+  useEffect(() => {
+    window.localStorage.setItem("groktimizer-sidebar-width", String(state.sidebarWidth));
+    window.localStorage.setItem("groktimizer-sidebar-collapsed", String(state.sidebarCollapsed));
+  }, [state.sidebarCollapsed, state.sidebarWidth]);
 
   useEffect(() => {
     let active = true;
