@@ -1,0 +1,11 @@
+.venv/
+__pycache__/
+*.pyc
+*.egg-info/
+.pytest_cache/
+groktimizer.toml
+.env
+.gtz/
+dist/
+*.gguf
+.DS_Store
