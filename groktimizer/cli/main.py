@@ -258,9 +258,27 @@ def spend():
     typer.echo(f"spend: ${gpus.current_spend_usd():.2f} / ${cfg.budget.spend_ceiling_usd:.2f}")
 
 
+def _sweep_project_pods(name_prefix: str) -> list[str]:
+    """Terminate orphan-prone RunPod pods by name prefix. Never raises."""
+    api_key = os.environ.get("RUNPOD_API_KEY")
+    if not api_key:
+        return []
+    try:
+        import runpod as rp
+
+        from groktimizer.core.gpu import sweep_pods
+
+        rp.api_key = api_key
+        return sweep_pods(rp, name_prefix)
+    except Exception:
+        return []
+
+
 @app.command()
 def stop():
-    """Tear down every sandbox in the project. History stays in the store."""
+    """Tear down every sandbox in the project and sweep its RunPod pods.
+
+    History stays in the store."""
     cfg = _cfg()
     client = _client(cfg)
 
@@ -274,12 +292,16 @@ def stop():
         return len(agents)
 
     with Store() as store:
-        typer.echo(f"deleted {asyncio.run(_stop(store))} sandboxes")
+        deleted = asyncio.run(_stop(store))
+    swept = _sweep_project_pods(f"gtz-{cfg.project}-")
+    typer.echo(f"deleted {deleted} sandboxes; terminated {len(swept)} runpod pods")
 
 
 @app.command()
 def kill(sandbox: str):
-    """Delete a single agent's sandbox. Its history stays in the store."""
+    """Delete a single agent's sandbox and sweep its RunPod pods.
+
+    Its history stays in the store."""
     cfg = _cfg()
     _require_project_sandbox(cfg, sandbox)
     client = _client(cfg)
@@ -294,7 +316,8 @@ def kill(sandbox: str):
 
     with Store() as store:
         asyncio.run(_kill(store))
-    typer.echo(json.dumps({"deleted": True, "sandbox": sandbox}))
+    swept = _sweep_project_pods(f"{sandbox}-")
+    typer.echo(json.dumps({"deleted": True, "sandbox": sandbox, "pods_terminated": swept}))
 
 
 if __name__ == "__main__":

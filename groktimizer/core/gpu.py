@@ -15,6 +15,23 @@ class BudgetError(Exception):
     pass
 
 
+def sweep_pods(rp, name_prefix: str) -> list[str]:
+    """Terminate every RunPod pod whose name starts with name_prefix.
+
+    Queries the RunPod API directly — never sandbox-local ledgers, which die with
+    their sandbox. This is the backstop against orphaned GPUs billing forever.
+    """
+    terminated = []
+    for pod in rp.get_pods():
+        if str(pod.get("name", "")).startswith(name_prefix):
+            try:
+                rp.terminate_pod(pod["id"])
+                terminated.append(pod["id"])
+            except Exception:  # noqa: BLE001 — best effort; report what we killed
+                continue
+    return terminated
+
+
 def _now() -> datetime:
     return datetime.now(UTC)
 
