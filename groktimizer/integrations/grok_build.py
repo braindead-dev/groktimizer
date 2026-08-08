@@ -6,6 +6,7 @@ import argparse
 import json
 import os
 import shutil
+import sys
 import tempfile
 import tomllib
 import urllib.error
@@ -15,9 +16,14 @@ from datetime import UTC, datetime
 from pathlib import Path
 from urllib.parse import urlparse
 
+from dotenv import find_dotenv, load_dotenv
+
 BEGIN_MARKER = "# >>> groktimizer fast model >>>"
 END_MARKER = "# <<< groktimizer fast model <<<"
 LOCAL_HOSTS = {"127.0.0.1", "::1", "localhost"}
+DEFAULT_ALIAS = "groktimizer-fast"
+DEFAULT_KEY_ENV = "GROKTIMIZER_MODEL_API_KEY"
+MANAGED_DESCRIPTION = "Optimized Grok deployment managed by Groktimizer"
 
 
 class ModelInstallError(RuntimeError):
@@ -28,7 +34,7 @@ class ModelInstallError(RuntimeError):
 class ModelConfig:
     base_url: str
     model: str = "grok-2"
-    alias: str = "groktimizer-fast"
+    alias: str = DEFAULT_ALIAS
     name: str = "Groktimizer Fast"
     context_window: int = 32_768
     max_completion_tokens: int = 8_192
@@ -80,7 +86,7 @@ def render_model_block(config: ModelConfig) -> str:
             f"model = {_toml_string(config.model)}",
             f"base_url = {_toml_string(config.base_url)}",
             f"name = {_toml_string(config.name)}",
-            'description = "Optimized Grok deployment managed by Groktimizer"',
+            f"description = {_toml_string(MANAGED_DESCRIPTION)}",
             'api_backend = "chat_completions"',
             credential,
             f"context_window = {config.context_window}",
@@ -110,6 +116,30 @@ def replace_managed_block(existing: str, block: str) -> str:
     return updated
 
 
+def remove_reserialized_managed_model(existing: str, alias: str) -> str:
+    """Remove our table after Grok Build has reserialized the config and dropped comments."""
+    parsed = tomllib.loads(existing) if existing.strip() else {}
+    current = parsed.get("model", {}).get(alias)
+    if current is None:
+        return existing
+    if not isinstance(current, dict) or current.get("description") != MANAGED_DESCRIPTION:
+        raise ModelInstallError(f"model alias {alias!r} already exists outside the managed block")
+
+    headers = {f"[model.{_toml_string(alias)}]"}
+    if all(character.isalnum() or character in "_-" for character in alias):
+        headers.add(f"[model.{alias}]")
+
+    lines = existing.splitlines(keepends=True)
+    start = next((index for index, line in enumerate(lines) if line.strip() in headers), None)
+    if start is None:
+        raise ModelInstallError(f"could not locate managed model table for alias {alias!r}")
+    end = next(
+        (index for index in range(start + 1, len(lines)) if lines[index].lstrip().startswith("[")),
+        len(lines),
+    )
+    return "".join(lines[:start] + lines[end:]).rstrip() + "\n"
+
+
 def probe_endpoint(config: ModelConfig, timeout: float = 10.0) -> list[str]:
     headers = {"Accept": "application/json"}
     if config.api_key_env:
@@ -135,11 +165,7 @@ def install_model_config(path: Path, config: ModelConfig) -> Path | None:
     path.parent.mkdir(parents=True, exist_ok=True)
     existing = path.read_text() if path.exists() else ""
     if BEGIN_MARKER not in existing:
-        parsed = tomllib.loads(existing) if existing.strip() else {}
-        if config.alias in parsed.get("model", {}):
-            raise ModelInstallError(
-                f"model alias {config.alias!r} already exists outside the managed block"
-            )
+        existing = remove_reserialized_managed_model(existing, config.alias)
 
     updated = replace_managed_block(existing, render_model_block(config))
     try:
@@ -225,6 +251,27 @@ def main() -> None:
     if backup:
         print(f"Backup: {backup}")
     print(f"Use it with: grok -m {config.alias}")
+
+
+def launch_fast_model() -> None:
+    """Open Grok Build with the managed fast model and the repo environment loaded."""
+    env_path = os.environ.get("GROKTIMIZER_ENV_FILE") or find_dotenv(usecwd=True)
+    if env_path:
+        load_dotenv(env_path)
+
+    key_env = os.environ.get("GROKTIMIZER_MODEL_KEY_ENV", DEFAULT_KEY_ENV)
+    if not os.environ.get(key_env):
+        raise SystemExit(
+            f"{key_env} is not set; run this command from the Groktimizer repo "
+            "or set GROKTIMIZER_ENV_FILE"
+        )
+
+    grok_binary = shutil.which("grok")
+    if grok_binary is None:
+        raise SystemExit("Grok Build is not installed; run https://x.ai/cli/install.sh first")
+
+    alias = os.environ.get("GROKTIMIZER_GROK_ALIAS", DEFAULT_ALIAS)
+    os.execv(grok_binary, [grok_binary, "-m", alias, *sys.argv[1:]])  # noqa: S606
 
 
 if __name__ == "__main__":

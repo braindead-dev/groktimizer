@@ -1,3 +1,4 @@
+import sys
 import tomllib
 
 import pytest
@@ -7,6 +8,7 @@ from groktimizer.integrations.grok_build import (
     ModelConfig,
     ModelInstallError,
     install_model_config,
+    launch_fast_model,
     normalize_base_url,
     render_model_block,
     validate_auth,
@@ -35,6 +37,37 @@ def test_install_preserves_config_and_is_idempotent(tmp_path):
     assert parsed["model"]["groktimizer-fast"]["base_url"] == "http://localhost:9000/v1"
     assert backup is not None and backup.exists()
     assert path.stat().st_mode & 0o777 == 0o600
+
+
+def test_install_recovers_after_grok_reserializes_managed_table(tmp_path):
+    path = tmp_path / "config.toml"
+    path.write_text(
+        'disabled_mcp_servers = ["PostHog"]\n\n'
+        '[model.groktimizer-fast]\n'
+        'model = "old-model"\n'
+        'base_url = "http://localhost:8000/v1"\n'
+        'description = "Optimized Grok deployment managed by Groktimizer"\n'
+    )
+
+    install_model_config(path, ModelConfig(base_url="http://localhost:9000/v1"))
+
+    text = path.read_text()
+    parsed = tomllib.loads(text)
+    assert text.count(BEGIN_MARKER) == 1
+    assert parsed["disabled_mcp_servers"] == ["PostHog"]
+    assert parsed["model"]["groktimizer-fast"]["base_url"] == "http://localhost:9000/v1"
+
+
+def test_install_does_not_overwrite_foreign_alias(tmp_path):
+    path = tmp_path / "config.toml"
+    path.write_text(
+        '[model.groktimizer-fast]\n'
+        'model = "someone-elses-model"\n'
+        'description = "Unrelated model"\n'
+    )
+
+    with pytest.raises(ModelInstallError, match="already exists outside"):
+        install_model_config(path, ModelConfig(base_url="http://localhost:9000/v1"))
 
 
 def test_public_endpoint_requires_dedicated_key(monkeypatch):
@@ -66,3 +99,24 @@ def test_public_endpoint_requires_dedicated_key(monkeypatch):
 def test_base_url_must_be_http_and_end_in_v1(value):
     with pytest.raises(ModelInstallError):
         normalize_base_url(value)
+
+
+def test_fast_model_launcher_loads_repo_env_and_execs_grok(tmp_path, monkeypatch):
+    (tmp_path / ".env").write_text("GROKTIMIZER_MODEL_API_KEY=test-key\n")
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("GROKTIMIZER_MODEL_API_KEY", raising=False)
+    monkeypatch.setattr("groktimizer.integrations.grok_build.shutil.which", lambda _: "/bin/grok")
+    monkeypatch.setattr(sys, "argv", ["gtz-grok", "-p", "hello"])
+    invocation = {}
+
+    def fake_execv(binary, args):
+        invocation.update(binary=binary, args=args)
+
+    monkeypatch.setattr("groktimizer.integrations.grok_build.os.execv", fake_execv)
+
+    launch_fast_model()
+
+    assert invocation == {
+        "binary": "/bin/grok",
+        "args": ["/bin/grok", "-m", "groktimizer-fast", "-p", "hello"],
+    }

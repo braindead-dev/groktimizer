@@ -15,6 +15,7 @@ dependencies = [
 [project.scripts]
 gtz = "groktimizer.cli.main:app"
 gtz-model = "groktimizer.integrations.grok_build:main"
+gtz-grok = "groktimizer.integrations.grok_build:launch_fast_model"
 
 [dependency-groups]
 dev = ["pytest>=8", "pytest-asyncio>=0.24", "ruff>=0.16.2"]
