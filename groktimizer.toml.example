@@ -1,7 +1,7 @@
 [project]
 name = "demo"
 shared_repo = "git@github.com:YOURORG/demo-kernels.git"   # work-products repo
-tooling_repo = "https://github.com/YOURORG/groktimizer.git" # this repo, pip-installable
+tooling_repo = "https://github.com/braindead-dev/groktimizer.git" # this repo, pip-installable
 image = "blaxel/py-app:latest"   # Debian 13; live-verified for grok CLI + tmux + pip
 region = "us-pdx-1"
 
