@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowUpRight, Clock3, Cpu, Radio, Workflow } from "lucide-react";
+import { ArrowUpRight, Clock3, Radio, Workflow } from "lucide-react";
 import { StatusDot, StatusPill } from "@/components/shared/status";
 import type { Agent } from "@/lib/types";
 import { useResearchDispatch, useResearchState } from "@/store/research-store";
@@ -22,15 +22,13 @@ export function ActivityView() {
   return (
     <div className="activity-view page-scroll">
       <header className="page-header activity-header">
-        <div><p className="eyebrow">All research</p><h1>Live runs</h1><p className="page-description">One surface for every team currently thinking, testing, or synthesizing.</p></div>
-        <div className="activity-summary"><Radio size={14} /><strong>{liveAgents.length}</strong> active agents</div>
+        <h1>Live runs</h1>
       </header>
 
       <div className="activity-stats">
-        <div><span>Active sessions</span><strong>{liveAgents.length}</strong><small>reported running</small></div>
-        <div><span>Registered sandboxes</span><strong>{agents.length}</strong><small>Blaxel registry</small></div>
+        <div><span>Active agents</span><strong>{liveAgents.length}</strong><small>running now</small></div>
+        <div><span>Total agents</span><strong>{agents.length}</strong><small>registered</small></div>
         <div><span>Live projects</span><strong>{liveProjects.length}</strong><small>{controlPlane.project ?? "none connected"}</small></div>
-        <div><span>Streaming bridge</span><strong>{controlPlane.mode === "live" ? "SSE" : "—"}</strong><small>{controlPlane.mode === "live" ? "gtz watch" : "not connected"}</small></div>
       </div>
 
       <div className="run-groups">
@@ -52,7 +50,7 @@ export function ActivityView() {
                     team={team}
                     onClick={() => dispatch({ type: "select", selection: { type: "agent", projectId: project.id, agentId: agent.id } })}
                   />
-                )) : <div className="live-empty-state"><Radio size={17} /><strong>No active sessions yet</strong><span>The orchestrator is registered, but no sandbox currently reports a running tmux session.</span></div>}
+                )) : <div className="live-empty-state"><Radio size={17} /><strong>No active agents</strong><span>No agents are currently running.</span></div>}
               </div>
             </section>
           );
@@ -74,8 +72,6 @@ function AgentActivityRow({ agent, team, onClick }: { agent: Agent; team: string
     <button className="agent-table-row" onClick={onClick} role="row">
       <span className="agent-cell-primary"><StatusDot status={agent.status} /><span><strong>{agent.name}</strong><small>{team}</small></span></span>
       <span className="agent-task-cell">{agent.task}</span>
-      <span className="progress-cell"><i><b style={{ width: `${agent.progress}%` }} /></i><em>{agent.progress}%</em></span>
-      <span className="agent-meta-cell"><Cpu size={12} /> {agent.tokens}</span>
       <span className="agent-meta-cell"><Clock3 size={12} /> {agent.elapsed}</span>
       <ArrowUpRight className="row-arrow" size={14} />
     </button>

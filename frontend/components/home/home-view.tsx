@@ -2,17 +2,11 @@
 
 import { FormEvent, KeyboardEvent, useState } from "react";
 import { motion } from "motion/react";
-import { ArrowRight, Sparkles, WandSparkles } from "lucide-react";
+import { ArrowRight, Sparkles } from "lucide-react";
 import { BrandMark } from "@/components/shared/brand-mark";
 import { StatusPill } from "@/components/shared/status";
 import { sendSteeringMessage, startResearchProject } from "@/lib/control-plane-client";
 import { useResearchDispatch, useResearchState } from "@/store/research-store";
-
-const starterPrompts = [
-  "Reduce Grok 2 time-to-first-token",
-  "Increase batch throughput under mixed traffic",
-  "Cut KV-cache memory without quality loss",
-];
 
 export function HomeView({ mode }: { mode: "home" | "new-project" }) {
   const { projects, controlPlane } = useResearchState();
@@ -67,17 +61,6 @@ export function HomeView({ mode }: { mode: "home" | "new-project" }) {
 
   return (
     <div className="home-view page-scroll">
-      <header className="minimal-header">
-        <div><span className="eyebrow">Autonomous model research</span></div>
-        <span className="header-meta">
-          {controlPlane.mode === "loading"
-            ? "Connecting to control plane…"
-            : controlPlane.mode === "live"
-              ? `${controlPlane.maxConcurrentPods ?? 0} GPU slots budgeted`
-              : "Repository baseline only"}
-        </span>
-      </header>
-
       <section className="launch-hero">
         <motion.div
           className="hero-mark"
@@ -87,15 +70,14 @@ export function HomeView({ mode }: { mode: "home" | "new-project" }) {
         >
           <BrandMark />
         </motion.div>
-        <p className="eyebrow">Groktimizer / {isCreating ? "New project" : liveOrchestrator ? "Live effort" : "New effort"}</p>
         <h1>{isCreating ? <>Start a separate<br />research project</> : liveOrchestrator ? <>What should the lab<br />do next?</> : <>What should the lab<br />make faster?</>}</h1>
-        <p className="hero-subtitle">
-          {creationBlocked
-            ? "This hackathon control plane is pinned to one repository and one active project. Finish or archive Groktimizer before launching another; this composer will never reuse its thread."
-            : liveOrchestrator
-              ? "Steer the existing main orchestrator. Your message resumes its live Grok session; no additional project is created."
+        {!liveOrchestrator || isCreating ? (
+          <p className="hero-subtitle">
+            {creationBlocked
+              ? "This hackathon control plane is pinned to one repository and one active project. Finish or archive Groktimizer before launching another; this composer will never reuse its thread."
               : "Give the orchestrator an objective. It will build teams, run experiments, challenge results, and prepare the winning patch."}
-        </p>
+          </p>
+        ) : null}
 
         <form className="launch-composer" onSubmit={launch}>
           <textarea
@@ -119,38 +101,21 @@ export function HomeView({ mode }: { mode: "home" | "new-project" }) {
           </div>
         </form>
         {launchError ? <p className="launch-error" role="alert">{launchError}</p> : null}
-        <p className={`control-plane-note control-plane-note-${controlPlane.mode}`}>
-          <span />
-          {controlPlane.mode === "live"
-            ? `Connected to ${controlPlane.project}. GitHub writes ${controlPlane.githubConnected ? "enabled" : "need GITHUB_TOKEN"}.`
-            : controlPlane.mode === "loading"
-              ? "Checking the local backend and Blaxel workspace."
-              : controlPlane.reason ?? "Live launches require the local control plane."}
-        </p>
-
-        <div className="starter-row" aria-label="Starter objectives">
-          {starterPrompts.map((prompt) => (
-            <button key={prompt} onClick={() => setObjective(prompt)} disabled={creationBlocked}>
-              <WandSparkles size={13} /> {prompt}
-            </button>
-          ))}
-        </div>
       </section>
 
       <section className="recent-runs">
         <div className="section-title-row">
-          <div><p className="eyebrow">In the lab</p><h2>Current efforts</h2></div>
+          <h2>Current efforts</h2>
           <button onClick={() => dispatch({ type: "select", selection: { type: "activity" } })}>View all activity <ArrowRight size={14} /></button>
         </div>
         <div className="recent-grid">
           {projects.slice(0, 3).map((project, index) => {
-            const delta = project.baseline ? ((project.best - project.baseline) / project.baseline) * 100 : 0;
-            const favorable = project.unit === "ms" ? delta <= 0 : delta >= 0;
-            const active = [
+            const projectAgents = [
               project.orchestrator,
               project.implementor,
               ...project.teams.flatMap((team) => [team.orchestrator, ...team.agents]),
-            ].filter((agent) => agent.sandboxName && (agent.status === "running" || agent.status === "thinking")).length;
+            ].filter((agent) => agent.sandboxName);
+            const active = projectAgents.filter((agent) => agent.status === "running" || agent.status === "thinking").length;
             return (
               <motion.button
                 className={`recent-project recent-project-${index + 1}`}
@@ -159,24 +124,25 @@ export function HomeView({ mode }: { mode: "home" | "new-project" }) {
                 whileHover={{ y: -3 }}
                 transition={{ duration: 0.2 }}
               >
-                <div className="recent-project-top"><StatusPill status={project.status} /><span>{project.createdAt}</span></div>
+                <div className="recent-project-top"><StatusPill status={project.status} /><span>{project.source === "live" ? "Live" : project.createdAt}</span></div>
                 <div>
-                  <p>{project.metric}</p>
-                  <strong>{project.best}<small>{project.unit}</small></strong>
-                  <span className={favorable ? "delta-good" : "delta-neutral"}>{delta > 0 ? "+" : ""}{delta.toFixed(1)}%</span>
+                  <p>{project.source === "live" ? "Active agents" : project.metric}</p>
+                  <strong>{project.source === "live" ? active : project.best}<small>{project.source === "live" ? "" : project.unit}</small></strong>
                 </div>
                 <footer>
                   <span>{project.shortName}</span>
-                  <span>{project.source === "live" ? `${active} agents live` : "committed results"}</span>
+                  <span>{project.source === "live" ? `${projectAgents.length} registered` : "committed results"}</span>
                 </footer>
               </motion.button>
             );
           })}
-          <button className="recent-project new-project-tile" onClick={() => dispatch({ type: "select", selection: { type: "new-project" } })}>
-            <span><Sparkles size={18} /></span>
-            <strong>Start another effort</strong>
-            <small>Open a new optimization frontier</small>
-          </button>
+          {!liveProject ? (
+            <button className="recent-project new-project-tile" onClick={() => dispatch({ type: "select", selection: { type: "new-project" } })}>
+              <span><Sparkles size={18} /></span>
+              <strong>Start an effort</strong>
+              <small>Open a new optimization frontier</small>
+            </button>
+          ) : null}
         </div>
       </section>
     </div>

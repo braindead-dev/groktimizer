@@ -7,7 +7,6 @@ import {
   ChevronRight,
   CircleGauge,
   Clock3,
-  Cpu,
   Network,
   Radio,
   Terminal,
@@ -18,12 +17,12 @@ import { StatusDot, StatusPill } from "@/components/shared/status";
 import type { Agent, Project, ResearchTeam } from "@/lib/types";
 import { useResearchDispatch } from "@/store/research-store";
 
-function PanelShell({ title, subtitle, children }: { title: string; subtitle: string; children: React.ReactNode }) {
+function PanelShell({ title, children }: { title: string; children: React.ReactNode }) {
   const dispatch = useResearchDispatch();
   return (
     <section className="intelligence-panel">
       <header className="intelligence-header">
-        <div><span>{subtitle}</span><h2>{title}</h2></div>
+        <h2>{title}</h2>
         <div>
           <button aria-label="Close panel" onClick={() => dispatch({ type: "toggle-detail" })}><X size={15} /></button>
         </div>
@@ -49,7 +48,7 @@ function RegistryRow({ project, agent, scope }: { project: Project; agent: Agent
       onClick={() => dispatch({ type: "select", selection: { type: "agent", projectId: project.id, agentId: agent.id } })}
     >
       <StatusDot status={agent.status} />
-      <span><strong>{agent.name}</strong><small>{scope} · {agent.sandboxName}</small></span>
+      <span><strong>{agent.name}</strong><small>{scope}</small></span>
       <em>{agent.elapsed}</em>
       <ChevronRight size={13} />
     </button>
@@ -63,7 +62,7 @@ function ProjectControl({ project }: { project: Project }) {
   const active = agents.filter((agent) => agent.status === "running" || agent.status === "thinking");
 
   return (
-    <PanelShell title="Research control" subtitle="Project orchestrator">
+    <PanelShell title="Research control">
       <div className="panel-tabs">
         <button className={tab === "map" ? "active" : ""} onClick={() => setTab("map")}><Network size={13} /> System map</button>
         <button className={tab === "registry" ? "active" : ""} onClick={() => setTab("registry")}><Activity size={13} /> Registry</button>
@@ -72,9 +71,9 @@ function ProjectControl({ project }: { project: Project }) {
         {tab === "map" ? (
           <motion.div key="map" className="control-scroll" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
             <div className="system-metrics">
-              <div><span>Sandboxes</span><strong>{agents.length}</strong><small>Blaxel registry</small></div>
-              <div><span>Running</span><strong>{active.length}</strong><small>tmux sessions</small></div>
-              <div><span>Teams</span><strong>{project.teams.length}</strong><small>registered tracks</small></div>
+              <div><span>Agents</span><strong>{agents.length}</strong></div>
+              <div><span>Running</span><strong>{active.length}</strong></div>
+              <div><span>Teams</span><strong>{project.teams.length}</strong></div>
             </div>
             <div className="topology-canvas topology-canvas-live">
               <div className="canvas-grid" />
@@ -84,7 +83,7 @@ function ProjectControl({ project }: { project: Project }) {
                 disabled={!project.orchestrator.sandboxName}
               >
                 <span className="node-ripple" /><div><Network size={18} /></div>
-                <strong>MAIN</strong><small>{project.orchestrator.sandboxName ? project.orchestrator.status : "not registered"}</small>
+                <strong>Orchestrator</strong><small>{project.orchestrator.sandboxName ? project.orchestrator.status : "not registered"}</small>
               </button>
               <div className="team-node-grid topology-team-list">
                 {project.teams.map((team) => {
@@ -97,24 +96,24 @@ function ProjectControl({ project }: { project: Project }) {
                       disabled={!team.orchestrator.sandboxName}
                     >
                       <span className="topology-team-index"><Workflow size={13} /></span>
-                      <span><strong>{team.name}</strong><small>{team.agents.length} implementers registered</small></span>
+                      <span><strong>{team.name}</strong><small>{team.agents.length} agents</small></span>
                       <span className="topology-team-live"><StatusDot status={team.orchestrator.status} /> {running} running</span>
                       <ChevronRight size={13} />
                     </button>
                   );
                 })}
                 {!project.teams.length ? (
-                  <div className="live-empty-state"><Workflow size={17} /><strong>No teams registered yet</strong><span>The main orchestrator creates team sandboxes through the Groktimizer MCP server.</span></div>
+                  <div className="live-empty-state"><Workflow size={17} /><strong>No teams yet</strong><span>Teams will appear here when they are created.</span></div>
                 ) : null}
               </div>
             </div>
           </motion.div>
         ) : (
           <motion.div key="registry" className="control-scroll registry-view" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
-            <div className="subsection-title"><span><Radio size={12} /> Live Blaxel registry</span><small>{agents.length} sandboxes</small></div>
+            <div className="subsection-title"><span>Agents</span><small>{agents.length} total</small></div>
             <div className="registry-list">
               {agents.map((agent) => <RegistryRow key={agent.id} project={project} agent={agent} scope={agent.role} />)}
-              {!agents.length ? <div className="live-empty-state"><Radio size={17} /><strong>Registry is empty</strong><span>Launch a project to provision the main orchestrator.</span></div> : null}
+              {!agents.length ? <div className="live-empty-state"><Radio size={17} /><strong>No agents yet</strong><span>Launch a project to create the orchestrator.</span></div> : null}
             </div>
           </motion.div>
         )}
@@ -128,14 +127,14 @@ function TeamControl({ project, team }: { project: Project; team: ResearchTeam }
   const active = teamAgents.filter((agent) => agent.status === "running" || agent.status === "thinking").length;
 
   return (
-    <PanelShell title={team.name} subtitle="Team orchestrator">
+    <PanelShell title={team.name}>
       <div className="team-control-scroll">
         <div className="team-summary-band">
-          <div><StatusPill status={team.orchestrator.status} /><p>{team.thesis}</p></div>
-          <strong>{active}<small> running</small></strong>
+          <div><StatusPill status={team.orchestrator.status} /></div>
+          <strong>{active}<small> active</small></strong>
         </div>
         <section className="team-roster-section registry-section">
-          <div className="subsection-title"><span><Workflow size={12} /> Registered team</span><small>{teamAgents.length} sandboxes</small></div>
+          <div className="subsection-title"><span><Workflow size={12} /> Agents</span><small>{teamAgents.length} total</small></div>
           <div className="registry-list">
             {teamAgents.map((agent) => <RegistryRow key={agent.id} project={project} agent={agent} scope={agent.role} />)}
           </div>
@@ -145,9 +144,9 @@ function TeamControl({ project, team }: { project: Project; team: ResearchTeam }
   );
 }
 
-function AgentControl({ agent, team }: { agent: Agent; team?: ResearchTeam }) {
+function AgentControl({ agent }: { agent: Agent }) {
   return (
-    <PanelShell title="Sandbox session" subtitle={team?.name ?? agent.role}>
+    <PanelShell title="Sandbox details">
       <div className="researcher-scroll agent-live-details">
         <div className="experiment-headline">
           <div><StatusPill status={agent.status} /><h3>{agent.name}</h3><p>{agent.task}</p></div>
@@ -158,9 +157,7 @@ function AgentControl({ agent, team }: { agent: Agent; team?: ResearchTeam }) {
           <div><Workflow size={13} /><span>Git branch</span><strong>{agent.branchName ?? "Not assigned"}</strong></div>
           <div><Radio size={13} /><span>Session</span><strong>{agent.status}</strong></div>
           <div><Clock3 size={13} /><span>Log activity</span><strong>{agent.elapsed}</strong></div>
-          <div><Cpu size={13} /><span>Transport</span><strong>{agent.sandboxName ? "SSE · gtz watch" : "Unavailable"}</strong></div>
         </section>
-        <div className="agent-live-note"><Radio size={15} /><p><strong>Live session output</strong>The rolling sandbox log is streamed into the chat pane. Steering messages are delivered with <code>gtz send</code>.</p></div>
       </div>
     </PanelShell>
   );
@@ -169,5 +166,5 @@ function AgentControl({ agent, team }: { agent: Agent; team?: ResearchTeam }) {
 export function IntelligencePanel({ project, agent, team }: { project: Project; agent: Agent; team?: ResearchTeam }) {
   if (agent.role === "orchestrator") return <ProjectControl project={project} />;
   if (agent.role === "team-orchestrator" && team) return <TeamControl project={project} team={team} />;
-  return <AgentControl agent={agent} team={team} />;
+  return <AgentControl agent={agent} />;
 }

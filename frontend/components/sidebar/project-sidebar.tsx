@@ -145,12 +145,13 @@ function ProjectBranch({ project }: { project: Project }) {
 export function ProjectSidebar() {
   const { projects, selection, sidebarOpen, controlPlane } = useResearchState();
   const dispatch = useResearchDispatch();
+  const hasLiveProject = projects.some((project) => project.source === "live");
   const activeCount = projects.reduce(
     (count, project) => count + [
       project.orchestrator,
       project.implementor,
       ...project.teams.flatMap((team) => [team.orchestrator, ...team.agents]),
-    ].filter((agent) => agent.sandboxName && agent.status === "running").length,
+    ].filter((agent) => agent.sandboxName && (agent.status === "running" || agent.status === "thinking")).length,
     0,
   );
 
@@ -176,19 +177,23 @@ export function ProjectSidebar() {
         >
           <Activity size={15} /> Live runs <span className="nav-count">{activeCount}</span>
         </button>
-        <button
-          className={`nav-row ${selection.type === "new-project" ? "nav-row-active" : ""}`}
-          onClick={() => dispatch({ type: "select", selection: { type: "new-project" } })}
-        >
-          <Plus size={15} /> New project
-        </button>
+        {!hasLiveProject ? (
+          <button
+            className={`nav-row ${selection.type === "new-project" ? "nav-row-active" : ""}`}
+            onClick={() => dispatch({ type: "select", selection: { type: "new-project" } })}
+          >
+            <Plus size={15} /> New project
+          </button>
+        ) : null}
       </nav>
 
       <div className="sidebar-section-head">
-        <span>Research projects</span>
-        <button className="icon-button mini" aria-label="Create project" onClick={() => dispatch({ type: "select", selection: { type: "new-project" } })}>
-          <Plus size={13} />
-        </button>
+        <span>Projects</span>
+        {!hasLiveProject ? (
+          <button className="icon-button mini" aria-label="Create project" onClick={() => dispatch({ type: "select", selection: { type: "new-project" } })}>
+            <Plus size={13} />
+          </button>
+        ) : null}
       </div>
       <div className="project-tree">
         {projects.map((project) => <ProjectBranch key={project.id} project={project} />)}
@@ -198,8 +203,8 @@ export function ProjectSidebar() {
         <div className="control-plane-summary">
           <span className={`connection-indicator connection-indicator-${controlPlane.mode}`} aria-hidden="true" />
           <span className="profile-copy">
-            <strong>{controlPlane.mode === "live" ? "Live control plane" : "Repository baseline"}</strong>
-            <small>{controlPlane.mode === "loading" ? "Connecting…" : controlPlane.mode === "live" ? `${controlPlane.project} · GitHub ${controlPlane.githubConnected ? "linked" : "read-only"}` : "No live agents"}</small>
+            <strong>{controlPlane.mode === "live" ? "Connected" : "Benchmark only"}</strong>
+            <small>{controlPlane.mode === "loading" ? "Connecting…" : controlPlane.mode === "live" ? controlPlane.project : "No live project"}</small>
           </span>
         </div>
       </div>
