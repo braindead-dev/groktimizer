@@ -3,8 +3,6 @@
 import { AnimatePresence, motion } from "motion/react";
 import {
   Activity,
-  Atom,
-  Bot,
   ChevronDown,
   ChevronRight,
   CircleGauge,
@@ -13,8 +11,6 @@ import {
   Home,
   Network,
   Plus,
-  Radio,
-  Settings2,
   Workflow,
 } from "lucide-react";
 import { BrandMark } from "@/components/shared/brand-mark";
@@ -165,7 +161,6 @@ export function ProjectSidebar() {
           <BrandMark />
           <span>groktimizer</span>
         </button>
-        <button className="icon-button" aria-label="Workspace settings"><Settings2 size={15} /></button>
       </div>
 
       <nav className="primary-nav" aria-label="Primary navigation">
@@ -200,25 +195,13 @@ export function ProjectSidebar() {
       </div>
 
       <div className="sidebar-foot">
-        <div className="compute-card">
-          <div className="compute-head">
-            <Radio size={13} /> Compute pool
-            <span>{controlPlane.mode === "live" ? `—/${controlPlane.maxConcurrentPods ?? 0}` : "—"}</span>
-          </div>
-          <div className="compute-meter"><span style={{ width: "0%" }} /></div>
-          <div className="compute-meta">
-            <span>{controlPlane.mode === "live" ? "RunPod budget" : "Not connected"}</span>
-            <span>{controlPlane.mode === "live" ? "agent-managed ledger" : "no live usage"}</span>
-          </div>
-        </div>
-        <button className="profile-row">
-          <span className="profile-avatar"><Atom size={14} /></span>
+        <div className="control-plane-summary">
+          <span className={`connection-indicator connection-indicator-${controlPlane.mode}`} aria-hidden="true" />
           <span className="profile-copy">
             <strong>{controlPlane.mode === "live" ? "Live control plane" : "Repository baseline"}</strong>
             <small>{controlPlane.mode === "loading" ? "Connecting…" : controlPlane.mode === "live" ? `${controlPlane.project} · GitHub ${controlPlane.githubConnected ? "linked" : "read-only"}` : "No live agents"}</small>
           </span>
-          <Bot size={15} />
-        </button>
+        </div>
       </div>
     </aside>
   );

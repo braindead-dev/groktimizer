@@ -2,7 +2,7 @@
 
 import { FormEvent, KeyboardEvent, useState } from "react";
 import { motion } from "motion/react";
-import { ArrowRight, Gauge, Plus, Sparkles, WandSparkles } from "lucide-react";
+import { ArrowRight, Sparkles, WandSparkles } from "lucide-react";
 import { BrandMark } from "@/components/shared/brand-mark";
 import { StatusPill } from "@/components/shared/status";
 import { sendSteeringMessage, startResearchProject } from "@/lib/control-plane-client";
@@ -113,10 +113,6 @@ export function HomeView({ mode }: { mode: "home" | "new-project" }) {
             rows={3}
           />
           <div className="composer-toolbar">
-            <div className="composer-tools">
-              <button type="button" className="tool-chip"><Plus size={14} /> Context</button>
-              <button type="button" className="tool-chip"><Gauge size={14} /> TTFT</button>
-            </div>
             <button className="launch-button" type="submit" disabled={creationBlocked || !objective.trim() || launching}>
               {creationBlocked ? "New project unavailable" : launching ? (!isCreating && liveOrchestrator ? "Sending…" : "Starting orchestrator…") : (!isCreating && liveOrchestrator ? "Steer orchestrator" : "Launch")} <ArrowRight size={15} />
             </button>
@@ -150,7 +146,11 @@ export function HomeView({ mode }: { mode: "home" | "new-project" }) {
           {projects.slice(0, 3).map((project, index) => {
             const delta = project.baseline ? ((project.best - project.baseline) / project.baseline) * 100 : 0;
             const favorable = project.unit === "ms" ? delta <= 0 : delta >= 0;
-            const active = project.teams.reduce((total, team) => total + team.agents.filter((agent) => agent.status === "running").length, 0);
+            const active = [
+              project.orchestrator,
+              project.implementor,
+              ...project.teams.flatMap((team) => [team.orchestrator, ...team.agents]),
+            ].filter((agent) => agent.sandboxName && (agent.status === "running" || agent.status === "thinking")).length;
             return (
               <motion.button
                 className={`recent-project recent-project-${index + 1}`}

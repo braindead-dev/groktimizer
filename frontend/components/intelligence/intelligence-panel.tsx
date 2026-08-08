@@ -8,10 +8,8 @@ import {
   CircleGauge,
   Clock3,
   Cpu,
-  Maximize2,
   Network,
   Radio,
-  RotateCcw,
   Terminal,
   Workflow,
   X,
@@ -27,8 +25,6 @@ function PanelShell({ title, subtitle, children }: { title: string; subtitle: st
       <header className="intelligence-header">
         <div><span>{subtitle}</span><h2>{title}</h2></div>
         <div>
-          <button aria-label="Expand panel"><Maximize2 size={14} /></button>
-          <button aria-label="Refresh panel"><RotateCcw size={14} /></button>
           <button aria-label="Close panel" onClick={() => dispatch({ type: "toggle-detail" })}><X size={15} /></button>
         </div>
       </header>

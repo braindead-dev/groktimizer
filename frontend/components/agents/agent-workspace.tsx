@@ -16,7 +16,11 @@ export function AgentWorkspace({ project, agent }: { project: Project; agent: Ag
 
   return (
     <div className={`agent-workspace ${detailOpen ? "detail-is-open" : "detail-is-closed"}`}>
-      <AgentChat project={project} agent={agent} />
+      <AgentChat
+        key={`${agent.id}:${agent.sandboxName ?? "pending"}`}
+        project={project}
+        agent={agent}
+      />
       <AnimatePresence initial={false}>
         {detailOpen ? (
           <motion.div

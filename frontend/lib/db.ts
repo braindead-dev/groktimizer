@@ -1,3 +1,5 @@
+import "server-only";
+
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 import Database from "better-sqlite3";
@@ -34,7 +36,7 @@ export interface StoredAgent {
 
 function openDatabase(): Database.Database | null {
   const path = process.env.GTZ_DB ?? resolve(controlPlaneRoot(), ".gtz", "groktimizer.db");
-  if (!existsSync(path)) return null;
+  if (!existsSync(/* turbopackIgnore: true */ path)) return null;
   return new Database(path, { readonly: true, fileMustExist: true });
 }
 

@@ -5,13 +5,9 @@ import { AnimatePresence, motion } from "motion/react";
 import {
   ArrowUp,
   Brain,
-  ChevronDown,
   CircleGauge,
   Code2,
-  Mic,
-  Paperclip,
   RotateCcw,
-  ShieldCheck,
   Sparkles,
 } from "lucide-react";
 import { ChatSkeleton } from "@/components/shared/skeleton";
@@ -59,7 +55,7 @@ function MessageBlock({ message }: { message: Message }) {
   if (message.kind === "event") {
     return (
       <div className="chat-event">
-        <button type="button"><Code2 size={13} /><span>{message.label}</span><small>{message.body}</small><ChevronDown size={12} /></button>
+        <Code2 size={13} /><span>{message.label}</span><small>{message.body}</small>
       </div>
     );
   }
@@ -142,15 +138,7 @@ function Composer({ agent, onSend }: { agent: Agent; onSend: (body: string) => v
           rows={2}
         />
         <div className="chat-composer-toolbar">
-          <div>
-            <button type="button" className="composer-icon" aria-label="Attach context"><Paperclip size={15} /></button>
-            <span className="access-label"><ShieldCheck size={13} /> Lab access</span>
-          </div>
-          <div>
-            <button type="button" className="model-picker">grok-4 research <ChevronDown size={12} /></button>
-            <button type="button" className="composer-icon" aria-label="Voice input"><Mic size={15} /></button>
-            <button className="send-button" type="submit" aria-label="Send message" disabled={!agent.sandboxName || !draft.trim()}><ArrowUp size={16} /></button>
-          </div>
+          <button className="send-button" type="submit" aria-label="Send message" disabled={!agent.sandboxName || !draft.trim()}><ArrowUp size={16} /></button>
         </div>
       </form>
     </div>
@@ -161,33 +149,40 @@ export function AgentChat({ project, agent }: { project: Project; agent: Agent }
   const dispatch = useResearchDispatch();
   const threadEnd = useRef<HTMLDivElement>(null);
   const stream = useAgentStream(agent.sandboxName);
-  const [historyStatus, setHistoryStatus] = useState<HistoryStatus>("loading");
+  const [historyStatus, setHistoryStatus] = useState<HistoryStatus>(
+    agent.sandboxName ? "loading" : "ready",
+  );
   const [history, setHistory] = useState<ChatMessage[]>([]);
   const [historyLog, setHistoryLog] = useState("");
   const [pendingSends, setPendingSends] = useState<PendingSend[]>([]);
-
-  const loadHistory = useCallback(async () => {
-    if (!agent.sandboxName) {
-      setHistoryStatus("ready");
-      return;
-    }
-    setHistoryStatus("loading");
-    try {
-      const payload = await fetchAgentHistory(agent.sandboxName);
-      setHistory(payload.messages);
-      setHistoryLog(payload.log);
-      setHistoryStatus("ready");
-    } catch {
-      setHistoryStatus("error");
-    }
-  }, [agent.sandboxName]);
+  const [historyAttempt, setHistoryAttempt] = useState(0);
 
   useEffect(() => {
-    setHistory([]);
-    setHistoryLog("");
-    setPendingSends([]);
-    void loadHistory();
-  }, [loadHistory]);
+    const sandbox = agent.sandboxName;
+    if (!sandbox) return;
+    let cancelled = false;
+
+    void fetchAgentHistory(sandbox).then(
+      (payload) => {
+        if (cancelled) return;
+        setHistory(payload.messages);
+        setHistoryLog(payload.log);
+        setHistoryStatus("ready");
+      },
+      () => {
+        if (!cancelled) setHistoryStatus("error");
+      },
+    );
+
+    return () => {
+      cancelled = true;
+    };
+  }, [agent.sandboxName, historyAttempt]);
+
+  const retryHistory = useCallback(() => {
+    setHistoryStatus("loading");
+    setHistoryAttempt((attempt) => attempt + 1);
+  }, []);
 
   // Durable history (SQLite) + live stream window, deduped by message id.
   const thread = useMemo(() => {
@@ -278,7 +273,7 @@ export function AgentChat({ project, agent }: { project: Project; agent: Agent }
         ) : historyStatus === "error" ? (
           <div className="chat-history-error" role="alert">
             <p>Message history could not be loaded.</p>
-            <button type="button" onClick={() => void loadHistory()}>Retry</button>
+            <button type="button" onClick={retryHistory}>Retry</button>
           </div>
         ) : (
           <>
