@@ -1328,3 +1328,31 @@ textarea::placeholder { color: #a6a89f; }
     transition-duration: .01ms !important;
   }
 }
+
+/* --- persistence & loading states --- */
+.skeleton-block {
+  display: inline-block;
+  border-radius: 8px;
+  background: linear-gradient(90deg, var(--surface-soft) 25%, #e4e4de 50%, var(--surface-soft) 75%);
+  background-size: 200% 100%;
+  animation: skeleton-shimmer 1.4s ease-in-out infinite;
+}
+@keyframes skeleton-shimmer {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+.chat-skeleton { display: flex; flex-direction: column; gap: 18px; padding: 12px 0; }
+.chat-skeleton-user { text-align: right; }
+.chat-history-error { padding: 24px 0; text-align: center; color: var(--muted); font-size: 12px; }
+.chat-history-error button {
+  margin-top: 8px; padding: 5px 14px; border: 1px solid var(--line); border-radius: 8px;
+  background: var(--surface); font-size: 11px; cursor: pointer;
+}
+.chat-empty { padding: 18px 0; text-align: center; color: var(--muted-light); font-size: 12px; }
+.chat-message-sending p { opacity: 0.65; }
+.chat-message-failed p { border: 1px solid rgba(190, 60, 40, 0.4); }
+.chat-send-failed { color: #b23c28; display: inline-flex; align-items: center; gap: 6px; }
+.chat-send-failed button {
+  display: inline-flex; align-items: center; gap: 3px; border: none; background: none;
+  color: inherit; font-size: 10px; text-decoration: underline; cursor: pointer; padding: 0;
+}

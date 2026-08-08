@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useState } from "react";
+import { FormEvent, KeyboardEvent, useState } from "react";
 import { motion } from "motion/react";
 import { ArrowRight, Gauge, Plus, Sparkles, WandSparkles } from "lucide-react";
 import { BrandMark } from "@/components/shared/brand-mark";
@@ -102,6 +102,12 @@ export function HomeView({ mode }: { mode: "home" | "new-project" }) {
             aria-label="Research objective"
             value={objective}
             onChange={(event) => setObjective(event.target.value)}
+            onKeyDown={(event: KeyboardEvent<HTMLTextAreaElement>) => {
+              if (event.key === "Enter" && !event.shiftKey) {
+                event.preventDefault();
+                event.currentTarget.form?.requestSubmit();
+              }
+            }}
             placeholder={creationBlocked ? "One active project is already attached to this repository" : !isCreating && liveOrchestrator ? "Ask or steer the main orchestrator…" : "Describe a measurable optimization objective…"}
             disabled={creationBlocked}
             rows={3}
@@ -112,7 +118,7 @@ export function HomeView({ mode }: { mode: "home" | "new-project" }) {
               <button type="button" className="tool-chip"><Gauge size={14} /> TTFT</button>
             </div>
             <button className="launch-button" type="submit" disabled={creationBlocked || !objective.trim() || launching}>
-              {creationBlocked ? "New project unavailable" : launching ? (!isCreating && liveOrchestrator ? "Sending…" : "Starting orchestrator…") : (!isCreating && liveOrchestrator ? "Steer orchestrator" : "Launch research")} <ArrowRight size={15} />
+              {creationBlocked ? "New project unavailable" : launching ? (!isCreating && liveOrchestrator ? "Sending…" : "Starting orchestrator…") : (!isCreating && liveOrchestrator ? "Steer orchestrator" : "Launch")} <ArrowRight size={15} />
             </button>
           </div>
         </form>

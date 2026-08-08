@@ -67,10 +67,17 @@ export type ControlPlaneResponse =
   | { connected: true; snapshot: ControlPlaneSnapshot; baseline: BaselineSnapshot }
   | { connected: false; mode: "baseline"; reason: string; baseline: BaselineSnapshot };
 
+export interface ChatMessage {
+  id: string;
+  role?: "user" | "agent";
+  body: string;
+  at: string;
+}
+
 export type AgentStreamEvent =
   | { type: "connection"; data: { mode: "live" } }
   | { type: "status"; data: { running: boolean; log_mtime: number | null } }
   | { type: "log"; data: { content: string } }
-  | { type: "messages"; data: { messages: Array<{ id: string; body: string; at: string }> } }
+  | { type: "messages"; data: { messages: ChatMessage[] } }
   | { type: "heartbeat"; data: { at: string } }
   | { type: "error"; data: { message: string } };

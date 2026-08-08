@@ -26,8 +26,15 @@ export async function POST(request: Request, context: { params: Promise<{ sandbo
   }
 
   try {
-    await runGtz(["send", sandbox, message.trim()], 30_000);
-    return NextResponse.json({ sent: true });
+    const stdout = await runGtz(["send", sandbox, message.trim()], 30_000);
+    let id: string | null = null;
+    try {
+      const parsed = JSON.parse(stdout.trim().split("\n").at(-1) ?? "");
+      if (typeof parsed?.id === "string") id = parsed.id;
+    } catch {
+      // older gtz builds print plain "sent"; the message still went through
+    }
+    return NextResponse.json({ sent: true, id });
   } catch {
     return NextResponse.json({ error: "Steering delivery failed" }, { status: 502 });
   }
