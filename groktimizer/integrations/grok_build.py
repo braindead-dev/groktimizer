@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import shutil
 import sys
 import tempfile
@@ -16,14 +17,20 @@ from datetime import UTC, datetime
 from pathlib import Path
 from urllib.parse import urlparse
 
-from dotenv import find_dotenv, load_dotenv
-
 BEGIN_MARKER = "# >>> groktimizer fast model >>>"
 END_MARKER = "# <<< groktimizer fast model <<<"
 LOCAL_HOSTS = {"127.0.0.1", "::1", "localhost"}
-DEFAULT_ALIAS = "groktimizer-fast"
-DEFAULT_KEY_ENV = "GROKTIMIZER_MODEL_API_KEY"
-MANAGED_DESCRIPTION = "Optimized Grok deployment managed by Groktimizer"
+DEFAULT_BASE_URL = "https://z08tqd2khleyx4-8000.proxy.runpod.net/v1"
+DEFAULT_MODEL = "groktimized-2"
+DEFAULT_ALIAS = "groktimized-2"
+DEFAULT_NAME = "Groktimized 2"
+LEGACY_ALIASES = ("groktimizer-fast",)
+MANAGED_DESCRIPTION = "Optimized Grok 2 deployment by Groktimizer"
+MANAGED_DESCRIPTIONS = {
+    MANAGED_DESCRIPTION,
+    "Optimized Grok deployment managed by Groktimizer",
+}
+TRUSTED_PUBLIC_ENDPOINTS = {DEFAULT_BASE_URL}
 
 
 class ModelInstallError(RuntimeError):
@@ -32,13 +39,14 @@ class ModelInstallError(RuntimeError):
 
 @dataclass(frozen=True)
 class ModelConfig:
-    base_url: str
-    model: str = "grok-2"
+    base_url: str = DEFAULT_BASE_URL
+    model: str = DEFAULT_MODEL
     alias: str = DEFAULT_ALIAS
-    name: str = "Groktimizer Fast"
+    name: str = DEFAULT_NAME
     context_window: int = 32_768
     max_completion_tokens: int = 8_192
     api_key_env: str | None = None
+    make_default: bool = True
 
 
 def _toml_string(value: str) -> str:
@@ -63,7 +71,11 @@ def validate_auth(config: ModelConfig) -> None:
     hostname = parsed.hostname
     if hostname not in LOCAL_HOSTS and parsed.scheme != "https":
         raise ModelInstallError("public endpoints must use HTTPS")
-    if hostname not in LOCAL_HOSTS and not config.api_key_env:
+    if (
+        hostname not in LOCAL_HOSTS
+        and not config.api_key_env
+        and config.base_url not in TRUSTED_PUBLIC_ENDPOINTS
+    ):
         raise ModelInstallError(
             "public endpoints require --api-key-env; use an SSH tunnel for an authless server"
         )
@@ -122,7 +134,7 @@ def remove_reserialized_managed_model(existing: str, alias: str) -> str:
     current = parsed.get("model", {}).get(alias)
     if current is None:
         return existing
-    if not isinstance(current, dict) or current.get("description") != MANAGED_DESCRIPTION:
+    if not isinstance(current, dict) or current.get("description") not in MANAGED_DESCRIPTIONS:
         raise ModelInstallError(f"model alias {alias!r} already exists outside the managed block")
 
     headers = {f"[model.{_toml_string(alias)}]"}
@@ -138,6 +150,47 @@ def remove_reserialized_managed_model(existing: str, alias: str) -> str:
         len(lines),
     )
     return "".join(lines[:start] + lines[end:]).rstrip() + "\n"
+
+
+def set_default_model(existing: str, alias: str) -> str:
+    """Set `[models].default` without reserializing or disturbing unrelated settings."""
+    value = _toml_string(alias)
+    replacement = f"default = {value}\n"
+    lines = existing.splitlines(keepends=True)
+
+    dotted_pattern = re.compile(r"^(?P<indent>\s*)models\.default\s*=.*$")
+    for index, line in enumerate(lines):
+        if line.lstrip().startswith("["):
+            break
+        match = dotted_pattern.match(line.rstrip("\r\n"))
+        if match:
+            lines[index] = f"{match.group('indent')}models.default = {value}\n"
+            return "".join(lines)
+
+    header = next((index for index, line in enumerate(lines) if line.strip() == "[models]"), None)
+    if header is not None:
+        end = next(
+            (
+                index
+                for index in range(header + 1, len(lines))
+                if lines[index].lstrip().startswith("[")
+            ),
+            len(lines),
+        )
+        default_pattern = re.compile(r'^\s*(?:default|"default")\s*=')
+        for index in range(header + 1, end):
+            if default_pattern.match(lines[index]):
+                indent = lines[index][: len(lines[index]) - len(lines[index].lstrip())]
+                lines[index] = f"{indent}{replacement}"
+                return "".join(lines)
+        lines.insert(header + 1, replacement)
+        return "".join(lines)
+
+    parsed = tomllib.loads(existing) if existing.strip() else {}
+    if "models" in parsed:
+        raise ModelInstallError("cannot safely update an inline [models] table")
+    separator = "" if not existing else ("" if existing.endswith("\n\n") else "\n")
+    return f"{existing}{separator}[models]\n{replacement}"
 
 
 def probe_endpoint(config: ModelConfig, timeout: float = 10.0) -> list[str]:
@@ -165,9 +218,12 @@ def install_model_config(path: Path, config: ModelConfig) -> Path | None:
     path.parent.mkdir(parents=True, exist_ok=True)
     existing = path.read_text() if path.exists() else ""
     if BEGIN_MARKER not in existing:
-        existing = remove_reserialized_managed_model(existing, config.alias)
+        for alias in (config.alias, *LEGACY_ALIASES):
+            existing = remove_reserialized_managed_model(existing, alias)
 
     updated = replace_managed_block(existing, render_model_block(config))
+    if config.make_default:
+        updated = set_default_model(updated, config.alias)
     try:
         tomllib.loads(updated)
     except tomllib.TOMLDecodeError as exc:
@@ -197,12 +253,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--base-url",
-        default=os.environ.get("GROKTIMIZER_MODEL_BASE_URL"),
+        default=os.environ.get("GROKTIMIZER_MODEL_BASE_URL", DEFAULT_BASE_URL),
         help="OpenAI-compatible base URL ending in /v1 (or GROKTIMIZER_MODEL_BASE_URL)",
     )
-    parser.add_argument("--model", default="grok-2", help="model ID sent to the endpoint")
-    parser.add_argument("--alias", default="groktimizer-fast", help="Grok Build model alias")
-    parser.add_argument("--name", default="Groktimizer Fast", help="model-picker display name")
+    parser.add_argument("--model", default=DEFAULT_MODEL, help="model ID sent to the endpoint")
+    parser.add_argument("--alias", default=DEFAULT_ALIAS, help="Grok Build model alias")
+    parser.add_argument("--name", default=DEFAULT_NAME, help="model-picker display name")
     parser.add_argument("--context-window", type=int, default=32_768)
     parser.add_argument("--max-completion-tokens", type=int, default=8_192)
     parser.add_argument(
@@ -215,14 +271,17 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="write the model entry without checking /v1/models",
     )
+    parser.add_argument(
+        "--no-default",
+        action="store_true",
+        help="add the model without selecting it as the default for new sessions",
+    )
     return parser
 
 
 def main() -> None:
     parser = build_parser()
     args = parser.parse_args()
-    if not args.base_url:
-        parser.error("--base-url or GROKTIMIZER_MODEL_BASE_URL is required")
     if shutil.which("grok") is None:
         parser.error("Grok Build is not installed; run https://x.ai/cli/install.sh first")
 
@@ -235,6 +294,7 @@ def main() -> None:
             context_window=args.context_window,
             max_completion_tokens=args.max_completion_tokens,
             api_key_env=args.api_key_env,
+            make_default=not args.no_default,
         )
         validate_auth(config)
         if not args.skip_probe:
@@ -250,22 +310,14 @@ def main() -> None:
     print(f"Added {config.name} as {config.alias!r} in {args.config}")
     if backup:
         print(f"Backup: {backup}")
-    print(f"Use it with: grok -m {config.alias}")
+    if config.make_default:
+        print("Set as the default for new Grok Build sessions.")
+    print("Open Grok Build normally: grok")
+    print(f"Switch anytime: /model {config.name}")
 
 
 def launch_fast_model() -> None:
-    """Open Grok Build with the managed fast model and the repo environment loaded."""
-    env_path = os.environ.get("GROKTIMIZER_ENV_FILE") or find_dotenv(usecwd=True)
-    if env_path:
-        load_dotenv(env_path)
-
-    key_env = os.environ.get("GROKTIMIZER_MODEL_KEY_ENV", DEFAULT_KEY_ENV)
-    if not os.environ.get(key_env):
-        raise SystemExit(
-            f"{key_env} is not set; run this command from the Groktimizer repo "
-            "or set GROKTIMIZER_ENV_FILE"
-        )
-
+    """Open stock Grok Build with the Groktimized model selected."""
     grok_binary = shutil.which("grok")
     if grok_binary is None:
         raise SystemExit("Grok Build is not installed; run https://x.ai/cli/install.sh first")

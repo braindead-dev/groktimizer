@@ -5,6 +5,7 @@ import pytest
 
 from groktimizer.integrations.grok_build import (
     BEGIN_MARKER,
+    DEFAULT_BASE_URL,
     ModelConfig,
     ModelInstallError,
     install_model_config,
@@ -34,7 +35,8 @@ def test_install_preserves_config_and_is_idempotent(tmp_path):
     parsed = tomllib.loads(text)
     assert text.count(BEGIN_MARKER) == 1
     assert parsed["cli"]["installer"] == "internal"
-    assert parsed["model"]["groktimizer-fast"]["base_url"] == "http://localhost:9000/v1"
+    assert parsed["models"]["default"] == "groktimized-2"
+    assert parsed["model"]["groktimized-2"]["base_url"] == "http://localhost:9000/v1"
     assert backup is not None and backup.exists()
     assert path.stat().st_mode & 0o777 == 0o600
 
@@ -55,13 +57,14 @@ def test_install_recovers_after_grok_reserializes_managed_table(tmp_path):
     parsed = tomllib.loads(text)
     assert text.count(BEGIN_MARKER) == 1
     assert parsed["disabled_mcp_servers"] == ["PostHog"]
-    assert parsed["model"]["groktimizer-fast"]["base_url"] == "http://localhost:9000/v1"
+    assert "groktimizer-fast" not in parsed["model"]
+    assert parsed["model"]["groktimized-2"]["base_url"] == "http://localhost:9000/v1"
 
 
 def test_install_does_not_overwrite_foreign_alias(tmp_path):
     path = tmp_path / "config.toml"
     path.write_text(
-        '[model.groktimizer-fast]\n'
+        '[model.groktimized-2]\n'
         'model = "someone-elses-model"\n'
         'description = "Unrelated model"\n'
     )
@@ -84,6 +87,38 @@ def test_public_endpoint_requires_dedicated_key(monkeypatch):
     insecure = ModelConfig(base_url="http://example.com/v1", api_key_env="FAST_GROK_KEY")
     with pytest.raises(ModelInstallError, match="must use HTTPS"):
         validate_auth(insecure)
+
+    validate_auth(ModelConfig())
+    assert ModelConfig().base_url == DEFAULT_BASE_URL
+
+
+def test_install_can_preserve_existing_default(tmp_path):
+    path = tmp_path / "config.toml"
+    path.write_text('[models]\ndefault = "grok-4.5"\n')
+
+    install_model_config(
+        path,
+        ModelConfig(base_url="http://localhost:8000/v1", make_default=False),
+    )
+
+    assert tomllib.loads(path.read_text())["models"]["default"] == "grok-4.5"
+
+
+def test_install_replaces_existing_default_without_touching_other_model_settings(tmp_path):
+    path = tmp_path / "config.toml"
+    path.write_text(
+        '[models]\ndefault = "grok-4.5"\nweb_search = "grok-4.5"\n\n'
+        '[ui]\nsimple_mode = true\n'
+    )
+
+    install_model_config(path, ModelConfig(base_url="http://localhost:8000/v1"))
+
+    parsed = tomllib.loads(path.read_text())
+    assert parsed["models"] == {
+        "default": "groktimized-2",
+        "web_search": "grok-4.5",
+    }
+    assert parsed["ui"]["simple_mode"] is True
 
 
 @pytest.mark.parametrize(
@@ -118,5 +153,5 @@ def test_fast_model_launcher_loads_repo_env_and_execs_grok(tmp_path, monkeypatch
 
     assert invocation == {
         "binary": "/bin/grok",
-        "args": ["/bin/grok", "-m", "groktimizer-fast", "-p", "hello"],
+        "args": ["/bin/grok", "-m", "groktimized-2", "-p", "hello"],
     }
