@@ -168,7 +168,11 @@ def build_server() -> FastMCP:
     @mcp.tool()
     def provision_gpu(name: str, image: str, gpu_type: str) -> dict:
         """Provision a RunPod GPU pod (budget-enforced). Terminate it when done."""
-        return gpus.provision(name, image, gpu_type)
+        # Prefix with this agent's sandbox name so orphaned pods are attributable
+        # and gtz stop/kill can sweep them even after the sandbox is gone.
+        my_agent = os.environ.get("GTZ_AGENT", "unknown")
+        pod_name = f"gtz-{cfg.project}-{my_team}-{my_agent}-{name}"
+        return gpus.provision(pod_name, image, gpu_type)
 
     @mcp.tool()
     def list_pods() -> dict:

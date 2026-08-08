@@ -41,28 +41,57 @@ async def tail_messages(client: SandboxClient, name: str, lines: int = 80) -> li
             and isinstance(message.get("body"), str)
             and isinstance(message.get("at"), str)
         ):
-            messages.append({key: message[key] for key in ("id", "body", "at")})
+            role = message.get("role")
+            messages.append(
+                {
+                    "id": message["id"],
+                    "role": role if role in ("user", "agent") else "user",
+                    "body": message["body"],
+                    "at": message["at"],
+                }
+            )
     return messages
 
 
-async def send_message(client: SandboxClient, name: str, message: str) -> None:
+# Appends the resumed grok run's final response to chat.jsonl as a structured
+# agent reply, so chat is two-way instead of steering-only. Runs in the sandbox.
+_APPEND_REPLY_PY = (
+    "import json,sys,uuid,datetime as dt\n"
+    "body=open(sys.argv[1]).read().strip()\n"
+    "rec={'id':'reply-'+uuid.uuid4().hex,'role':'agent','body':body,"
+    "'at':dt.datetime.now(dt.timezone.utc).isoformat()}\n"
+    f"body and open({CHAT_LOG!r},'a').write(json.dumps(rec)+chr(10))\n"
+)
+
+
+async def send_message(client: SandboxClient, name: str, message: str) -> str:
+    """Steer an agent. Returns the chat message id of the steering record."""
     # Steering replaces the current headless turn, then resumes the same session from
     # the project clone. Keeping the process inside the named tmux session preserves
-    # accurate liveness reporting for the CLI and web control plane.
+    # accurate liveness reporting for the CLI and web control plane. The run's stdout
+    # is teed to the session log AND captured so the reply lands in chat.jsonl.
     script = (
         "{ . /opt/gtz/.env; } 2>/dev/null; "
         'export PATH="$HOME/.local/bin:$HOME/.grok/bin:$PATH"; '
         "export GIT_ASKPASS=/opt/gtz/git-askpass.sh GIT_TERMINAL_PROMPT=0; "
         "cd /workspace/project; "
+        'reply_file=$(mktemp /tmp/gtz-reply.XXXXXX); '
+        # The trap also fires when the NEXT steering message kills this session,
+        # so an interrupted turn still lands its partial output as a chat reply
+        # instead of vanishing (a rapid message burst previously yielded nothing).
+        f'trap \'python3 -c {shlex.quote(_APPEND_REPLY_PY)} "$reply_file"; '
+        'rm -f "$reply_file"\' EXIT HUP TERM; '
         "grok --continue --always-approve "
         '${GTZ_GROK_MODEL:+--model "$GTZ_GROK_MODEL"} '
         '${GTZ_REASONING_EFFORT:+--reasoning-effort "$GTZ_REASONING_EFFORT"} '
-        f'-p "$0" >> {LOG} 2>&1'
+        f'-p "$0" 2>&1 | tee -a {LOG} > "$reply_file"'
     )
     resume = shlex.join(["bash", "-lc", script, message])
+    message_id = f"steer-{uuid4().hex}"
     chat_event = json.dumps(
         {
-            "id": f"steer-{uuid4().hex}",
+            "id": message_id,
+            "role": "user",
             "body": message,
             "at": datetime.now(UTC).isoformat(),
         },
@@ -74,6 +103,7 @@ async def send_message(client: SandboxClient, name: str, message: str) -> None:
         f"tmux new-session -d -s gtz {shlex.quote(resume)}"
     )
     await client.exec(name, command)
+    return message_id
 
 
 async def exec_in_agent(

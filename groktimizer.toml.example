@@ -6,8 +6,9 @@ image = "blaxel/py-app:latest"   # Debian 13; live-verified for grok CLI + tmux 
 region = "us-pdx-1"
 
 [caps]
-max_teams = 3
-max_agents_per_team = 5
+max_active_projects = 2   # concurrent projects with live agents
+max_teams = 5
+max_agents_per_team = 3
 
 [budget]
 spend_ceiling_usd = 25.0

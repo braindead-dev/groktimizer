@@ -24,6 +24,9 @@ class FakeRunpodApi:
     def terminate_pod(self, pod_id):
         self.pods.pop(pod_id)
 
+    def get_pods(self):
+        return list(self.pods.values())
+
     def get_gpu(self, gpu_id):
         return {"id": gpu_id, "lowestPrice": {"uninterruptablePrice": 0.60}}
 
@@ -103,3 +106,15 @@ def test_ceiling_accounts_for_live_pods_full_lifetime(rp, tmp_path):
     b.provision("a", "img", GPU)
     with pytest.raises(BudgetError, match="ceiling"):
         b.provision("b", "img", GPU)
+
+
+def test_sweep_pods_by_prefix(rp, tmp_path):
+    from groktimizer.core.gpu import sweep_pods
+    rp.create_pod("gtz-demo-attn-impl1-bench", "img", GPU)
+    rp.create_pod("gtz-demo-gemm-impl2-bench", "img", GPU)
+    rp.create_pod("unrelated-pod", "img", GPU)
+    swept = sweep_pods(rp, "gtz-demo-")
+    assert len(swept) == 2
+    assert [p["name"] for p in rp.pods.values()] == ["unrelated-pod"]
+    # already-gone pods don't break the sweep
+    assert sweep_pods(rp, "gtz-demo-") == []

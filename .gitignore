@@ -16,3 +16,5 @@ groktimizer.toml
 dist/
 *.gguf
 .DS_Store
+# local baseline cache; canonical copy lives in the research repo
+/results/

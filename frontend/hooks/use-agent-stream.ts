@@ -2,15 +2,23 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { subscribeToAgent } from "@/lib/control-plane-client";
-import type { AgentStreamEvent } from "@/lib/control-plane-types";
+import type { AgentStreamEvent, ChatMessage } from "@/lib/control-plane-types";
 
 export type StreamMode = "connecting" | "live" | "reconnecting" | "unavailable";
 export type StreamActivity = "receiving" | "idle" | "stopped" | "connecting";
 
+function mergeMessages(previous: ChatMessage[], incoming: ChatMessage[]): ChatMessage[] {
+  // The watcher tails a rolling window, so incoming is a suffix of the full
+  // history — append what's new instead of replacing (which dropped history).
+  const seen = new Set(previous.map((message) => message.id));
+  const fresh = incoming.filter((message) => !seen.has(message.id));
+  return fresh.length ? [...previous, ...fresh] : previous;
+}
+
 export function useAgentStream(agentId?: string) {
   const [mode, setMode] = useState<StreamMode>(agentId ? "connecting" : "unavailable");
   const [latestLog, setLatestLog] = useState("");
-  const [messages, setMessages] = useState<Array<{ id: string; body: string; at: string }>>([]);
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [running, setRunning] = useState<boolean | null>(null);
   const [lastLogAt, setLastLogAt] = useState<number | null>(null);
   const [lastHeartbeatAt, setLastHeartbeatAt] = useState<number | null>(null);
@@ -27,7 +35,9 @@ export function useAgentStream(agentId?: string) {
           setLastLogAt(event.data.log_mtime ? event.data.log_mtime * 1000 : null);
         }
         if (event.type === "log") setLatestLog(event.data.content);
-        if (event.type === "messages") setMessages(event.data.messages);
+        if (event.type === "messages") {
+          setMessages((previous) => mergeMessages(previous, event.data.messages));
+        }
         if (event.type === "heartbeat") setLastHeartbeatAt(Date.parse(event.data.at));
         if (event.type === "error") setMode("reconnecting");
       },

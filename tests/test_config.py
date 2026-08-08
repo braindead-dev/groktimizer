@@ -24,7 +24,7 @@ def test_load_config(tmp_path: Path):
     cfg = load_config(p)
     assert cfg.project == "demo"
     assert cfg.caps.max_teams == 3
-    assert cfg.caps.max_agents_per_team == 5  # default
+    assert cfg.caps.max_agents_per_team == 3  # default
     assert cfg.budget.spend_ceiling_usd == 10.0
     assert cfg.image  # has a default
 

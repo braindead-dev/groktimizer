@@ -11,6 +11,7 @@ interface ControlPlaneState {
   reason?: string;
   maxConcurrentPods?: number;
   githubConnected?: boolean;
+  sawEmptyPoll?: boolean;  // tolerate one empty snapshot before evicting a live project
 }
 
 interface ResearchState {
@@ -263,6 +264,21 @@ function reducer(state: ResearchState, action: Action): ResearchState {
     case "hydrate-control-plane": {
       const wasLive = state.controlPlane.mode === "live";
       if (action.snapshot.agents.length === 0) {
+        // A transient empty snapshot (registry hiccup mid-poll) must not evict a
+        // live project the user is looking at. Tolerate exactly one empty poll;
+        // a second consecutive one means the project is genuinely gone.
+        if (wasLive && state.projects[0]?.source === "live" && !state.controlPlane.sawEmptyPoll) {
+          return {
+            ...state,
+            controlPlane: {
+              mode: "live",
+              project: action.snapshot.project,
+              maxConcurrentPods: action.snapshot.budget.max_concurrent_pods,
+              githubConnected: action.snapshot.integrations.github,
+              sawEmptyPoll: true,
+            },
+          };
+        }
         const baseline = projectFromBaseline(action.baseline);
         return {
           ...state,

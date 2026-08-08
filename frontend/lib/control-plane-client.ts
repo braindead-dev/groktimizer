@@ -1,6 +1,6 @@
 "use client";
 
-import type { AgentStreamEvent, ControlPlaneResponse } from "@/lib/control-plane-types";
+import type { AgentStreamEvent, ChatMessage, ControlPlaneResponse } from "@/lib/control-plane-types";
 
 export async function fetchControlPlane(): Promise<ControlPlaneResponse> {
   const response = await fetch("/api/control-plane", { cache: "no-store" });
@@ -15,7 +15,22 @@ export async function sendSteeringMessage(sandbox: string, message: string) {
     body: JSON.stringify({ message }),
   });
   if (!response.ok) throw new Error("The steering message could not be delivered");
-  return response.json() as Promise<{ sent: true }>;
+  return response.json() as Promise<{ sent: true; id: string | null }>;
+}
+
+export async function fetchAgentHistory(sandbox: string) {
+  const response = await fetch(`/api/agents/${encodeURIComponent(sandbox)}/history`, { cache: "no-store" });
+  if (!response.ok) throw new Error("Unable to load message history");
+  return response.json() as Promise<{ messages: ChatMessage[]; log: string }>;
+}
+
+export async function deleteAgent(sandbox: string) {
+  const response = await fetch(`/api/agents/${encodeURIComponent(sandbox)}`, { method: "DELETE" });
+  const payload = await response.json().catch(() => null) as { deleted?: boolean; error?: string } | null;
+  if (!response.ok || !payload?.deleted) {
+    throw new Error(payload?.error ?? "The agent could not be deleted");
+  }
+  return payload as { deleted: true };
 }
 
 export async function startResearchProject(objective: string) {

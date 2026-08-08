@@ -1,12 +1,21 @@
 import { NextResponse } from "next/server";
-import type { ControlPlaneSnapshot } from "@/lib/control-plane-types";
+import type { BaselineSnapshot, ControlPlaneSnapshot } from "@/lib/control-plane-types";
 import { hasControlPlaneConfig, loadCommittedBaseline, runGtz } from "@/lib/control-plane-server";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
+const EMPTY_BASELINE: BaselineSnapshot = {
+  hardware: { gpu: "unavailable", vramGb: 0, contextTokens: 0 },
+  latency: [],
+  throughput: [],
+  accuracy: [],
+};
+
 export async function GET() {
-  const baseline = await loadCommittedBaseline();
+  // Baseline data is decorative; its absence (missing results/, private research
+  // repo, no GITHUB_TOKEN) must never report the live control plane as down.
+  const baseline = await loadCommittedBaseline().catch(() => EMPTY_BASELINE);
   if (!hasControlPlaneConfig()) {
     return NextResponse.json(
       { connected: false, mode: "baseline", reason: "No groktimizer.toml is configured", baseline },

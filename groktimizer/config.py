@@ -7,8 +7,9 @@ from pydantic import BaseModel
 
 
 class Caps(BaseModel):
-    max_teams: int = 3
-    max_agents_per_team: int = 5
+    max_active_projects: int = 2   # concurrent projects with live agents, workspace-wide
+    max_teams: int = 5
+    max_agents_per_team: int = 3
 
 
 class Budget(BaseModel):
