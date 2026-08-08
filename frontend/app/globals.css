@@ -680,6 +680,7 @@ textarea::placeholder { color: #a6a89f; }
 }
 
 .recent-project-top > strong { color: var(--ink); font-size: 12px; font-weight: 580; }
+.recent-project-top .status-pill { padding: 2px 7px; }
 .recent-project-objective {
   display: -webkit-box;
   overflow: hidden;
