@@ -48,17 +48,32 @@ apt-get update -qq >/dev/null
 apt-get install -y -qq curl tmux >/dev/null
 curl -fsSL https://x.ai/cli/install.sh | bash
 pip install --quiet "git+${GTZ_TOOLING_REPO}"
-[ -d /workspace/project/.git ] || git clone "${GTZ_SHARED_REPO}" /workspace/project
-cd /workspace/project
-git fetch origin main
-if git ls-remote --exit-code --heads origin "$GTZ_BRANCH" >/dev/null 2>&1; then
-  git fetch origin "$GTZ_BRANCH"
-  git checkout -B "$GTZ_BRANCH" "origin/$GTZ_BRANCH"
-else
-  git checkout -B "$GTZ_BRANCH" origin/main
+# A broken/missing shared repo degrades to a local-only workspace instead of
+# killing the whole agent: the failure is loudly recorded for the operator and
+# the agent itself, and the session (chat/steering) still comes up.
+if [ ! -d /workspace/project/.git ]; then
+  if ! git clone "${GTZ_SHARED_REPO}" /workspace/project; then
+    mkdir -p /workspace/project
+    cd /workspace/project
+    git init -q -b main
+    echo "shared repo unavailable at bootstrap: ${GTZ_SHARED_REPO}" > CLONE_FAILED.md
+    git add CLONE_FAILED.md && git commit -qm "bootstrap: shared repo unavailable"
+  fi
 fi
-if [ "$GTZ_BRANCH" != "main" ]; then
-  git push -u origin "$GTZ_BRANCH"
+cd /workspace/project
+if git remote get-url origin >/dev/null 2>&1; then
+  git fetch origin main
+  if git ls-remote --exit-code --heads origin "$GTZ_BRANCH" >/dev/null 2>&1; then
+    git fetch origin "$GTZ_BRANCH"
+    git checkout -B "$GTZ_BRANCH" "origin/$GTZ_BRANCH"
+  else
+    git checkout -B "$GTZ_BRANCH" origin/main
+  fi
+  if [ "$GTZ_BRANCH" != "main" ]; then
+    git push -u origin "$GTZ_BRANCH"
+  fi
+else
+  git checkout -B "$GTZ_BRANCH"
 fi
 grok mcp add groktimizer -- python3 -m groktimizer.mcp
 mkdir -p /var/log/gtz
