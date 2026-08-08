@@ -23,10 +23,7 @@ class AgentInfo:
 async def active_projects(client: SandboxClient) -> list[str]:
     """Distinct project names that currently have any live agent sandbox."""
     metas = await client.list({})
-    return sorted({
-        project for m in metas
-        if (project := m.labels.get("gtz-project"))
-    })
+    return sorted({project for m in metas if (project := m.labels.get("gtz-project"))})
 
 
 class Registry:

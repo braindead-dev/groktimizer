@@ -75,7 +75,7 @@ async def send_message(client: SandboxClient, name: str, message: str) -> str:
         'export PATH="$HOME/.local/bin:$HOME/.grok/bin:$PATH"; '
         "export GIT_ASKPASS=/opt/gtz/git-askpass.sh GIT_TERMINAL_PROMPT=0; "
         "cd /workspace/project; "
-        'reply_file=$(mktemp /tmp/gtz-reply.XXXXXX); '
+        "reply_file=$(mktemp /tmp/gtz-reply.XXXXXX); "
         # The trap also fires when the NEXT steering message kills this session,
         # so an interrupted turn still lands its partial output as a chat reply
         # instead of vanishing (a rapid message burst previously yielded nothing).

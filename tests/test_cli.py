@@ -73,10 +73,12 @@ async def test_project_cap_blocks_third_project(tmp_path):
     from groktimizer.core.store import Store
 
     client = FakeSandboxClient()
-    await client.create("gtz-alpha-hq-main", "img", "r",
-                        agent_labels("alpha", "hq", "main", "main"), {})
-    await client.create("gtz-beta-hq-main", "img", "r",
-                        agent_labels("beta", "hq", "main", "main"), {})
+    await client.create(
+        "gtz-alpha-hq-main", "img", "r", agent_labels("alpha", "hq", "main", "main"), {}
+    )
+    await client.create(
+        "gtz-beta-hq-main", "img", "r", agent_labels("beta", "hq", "main", "main"), {}
+    )
     cfg = Config(project="gamma", shared_repo="git@x:y.git", tooling_repo="https://g/o/r.git")
     with Store(tmp_path / "gtz.db") as store:
         with pytest.raises(ValueError, match="active project cap"):
@@ -87,8 +89,9 @@ async def test_snapshot_ingests_into_store(tmp_path):
     from groktimizer.core.store import Store
 
     client = FakeSandboxClient()
-    await client.create("gtz-demo-hq-main", "img", "r",
-                        agent_labels("demo", "hq", "main", "main"), {})
+    await client.create(
+        "gtz-demo-hq-main", "img", "r", agent_labels("demo", "hq", "main", "main"), {}
+    )
     client.exec_responses["tail -n"] = ExecResult(
         stdout='{"id":"steer-9","role":"user","body":"hi","at":"2026-01-01T00:00:00"}\n',
         exit_code=0,
@@ -106,14 +109,16 @@ async def test_snapshot_marks_vanished_agents_terminated(tmp_path):
     from groktimizer.core.store import Store
 
     client = FakeSandboxClient()
-    await client.create("gtz-demo-hq-main", "img", "r",
-                        agent_labels("demo", "hq", "main", "main"), {})
+    await client.create(
+        "gtz-demo-hq-main", "img", "r", agent_labels("demo", "hq", "main", "main"), {}
+    )
     client.exec_responses["wc -c"] = ExecResult(stdout="0", exit_code=0)
     cfg = Config(project="demo", shared_repo="git@x:y.git", tooling_repo="https://g/o/r.git")
     with Store(tmp_path / "gtz.db") as store:
-        store.upsert_agent("gtz-demo-attn-dead1", project="demo", team="attn",
-                           name="dead1", role="implementer")
+        store.upsert_agent(
+            "gtz-demo-attn-dead1", project="demo", team="attn", name="dead1", role="implementer"
+        )
         await collect_snapshot(cfg, client, store)
         rows = {a["sandbox"]: a["terminated_at"] for a in store.list_agents("demo")}
-        assert rows["gtz-demo-attn-dead1"] is not None   # vanished -> terminated
-        assert rows["gtz-demo-hq-main"] is None          # live -> untouched
+        assert rows["gtz-demo-attn-dead1"] is not None  # vanished -> terminated
+        assert rows["gtz-demo-hq-main"] is None  # live -> untouched

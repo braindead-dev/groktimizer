@@ -8,8 +8,13 @@ from groktimizer.core.sandbox import ExecResult
 from groktimizer.core.store import Store
 from tests.fakes import FakeSandboxClient
 
-AGENT = AgentInfo(project="demo", team="attn", agent="impl1",
-                  role="implementer", sandbox_name="gtz-demo-attn-impl1")
+AGENT = AgentInfo(
+    project="demo",
+    team="attn",
+    agent="impl1",
+    role="implementer",
+    sandbox_name="gtz-demo-attn-impl1",
+)
 
 
 @pytest.fixture
@@ -52,8 +57,9 @@ async def test_ingest_survives_exec_failure(store):
 async def test_ingest_handles_log_truncation(store):
     client = FakeSandboxClient()
     client.exec_responses["tail -n"] = ExecResult(stdout="", exit_code=0)
-    store.upsert_agent(AGENT.sandbox_name, project="demo", team="attn",
-                       name="impl1", role="implementer")
+    store.upsert_agent(
+        AGENT.sandbox_name, project="demo", team="attn", name="impl1", role="implementer"
+    )
     store.set_log_offset(AGENT.sandbox_name, 100)
     # sandbox restarted: log is now smaller than our offset -> reset to 0 and re-read
     client.exec_responses["wc -c"] = ExecResult(stdout="5 /var/log/gtz/session.log\n", exit_code=0)
