@@ -46,6 +46,23 @@ uv run gtz spend                    # GPU ledger vs ceiling
 uv run gtz stop                     # delete every sandbox in the project
 ```
 
+### Add the optimized deployment to Grok Build
+
+Grok Build supports custom OpenAI-compatible models. Once the optimized server is reachable,
+register it under the `groktimizer-fast` alias:
+
+```bash
+uv run gtz-model --base-url http://127.0.0.1:8000/v1 --model grok-2
+grok -m groktimizer-fast
+```
+
+The installer probes `/v1/models`, updates only its marked block in `~/.grok/config.toml`, and
+backs up an existing config. Authless endpoints are restricted to loopback addresses. For an
+authenticated public endpoint, pass a dedicated key name such as
+`--api-key-env GROKTIMIZER_API_KEY`; the secret stays in the environment and is never written.
+Keep that variable set whenever you select the model. Prefer an SSH tunnel when the serving process
+does not enforce its own API key; the installer will not register a public authless endpoint.
+
 ### Web command center
 
 ```bash
