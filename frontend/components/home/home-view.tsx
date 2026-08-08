@@ -3,7 +3,7 @@
 import { FormEvent, KeyboardEvent, useState } from "react";
 import { motion } from "motion/react";
 import { ArrowRight, Sparkles } from "lucide-react";
-import { BrandMark } from "@/components/shared/brand-mark";
+import { BrandLockup } from "@/components/shared/brand-mark";
 import { StatusPill } from "@/components/shared/status";
 import { sendSteeringMessage, startResearchProject } from "@/lib/control-plane-client";
 import { useResearchDispatch, useResearchState } from "@/store/research-store";
@@ -68,7 +68,7 @@ export function HomeView({ mode }: { mode: "home" | "new-project" }) {
           animate={{ opacity: 1, scale: 1, rotate: 0 }}
           transition={{ duration: 0.45, ease: [0.22, 1, 0.36, 1] }}
         >
-          <BrandMark />
+          <BrandLockup />
         </motion.div>
         <h1>{isCreating ? <>Start a separate<br />research project</> : liveOrchestrator ? <>What should the lab<br />do next?</> : <>What should the lab<br />make faster?</>}</h1>
         {!liveOrchestrator || isCreating ? (

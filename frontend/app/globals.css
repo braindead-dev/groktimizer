@@ -172,45 +172,39 @@ button:disabled {
 }
 
 .brand-mark {
-  position: relative;
   width: 26px;
   height: 26px;
-  display: grid;
-  place-items: center;
-  overflow: hidden;
-  border-radius: 8px;
-  background: var(--surface-strong);
-  color: white;
+  display: inline-flex;
+  flex: 0 0 auto;
+  color: var(--ink);
 }
 
-.brand-core {
-  position: relative;
-  z-index: 2;
-  font-size: 14px;
-  font-weight: 650;
-  transform: translateY(-1px);
+.brand-mark svg {
+  width: 100%;
+  height: 100%;
 }
 
-.brand-orbit {
-  position: absolute;
-  width: 24px;
-  height: 9px;
-  border: 1px solid rgba(255, 255, 255, 0.42);
-  border-radius: 50%;
+.brand-lockup {
+  display: inline-flex;
+  align-items: center;
+  gap: 14px;
+  color: var(--ink);
 }
 
-.brand-orbit-a { transform: rotate(48deg); }
-.brand-orbit-b { transform: rotate(-48deg); }
+.brand-lockup > span:last-child {
+  font-size: 34px;
+  font-weight: 590;
+  letter-spacing: -0.065em;
+  line-height: 1;
+}
 
 .hero-mark .brand-mark {
-  width: 44px;
-  height: 44px;
-  border-radius: 13px;
-  box-shadow: 0 12px 28px rgba(23, 24, 19, 0.16);
+  width: 54px;
+  height: 54px;
 }
 
-.hero-mark .brand-core { font-size: 21px; }
-.hero-mark .brand-orbit { width: 40px; height: 14px; }
+.hero-mark .brand-lockup { gap: 17px; }
+.hero-mark .brand-lockup > span:last-child { font-size: clamp(34px, 4vw, 50px); }
 
 .sidebar {
   position: relative;
