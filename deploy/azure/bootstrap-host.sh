@@ -74,6 +74,7 @@ sed "s/__GTZ_DOMAIN__/${GTZ_DOMAIN}/g" \
 sed "s/__GTZ_DOMAIN__/${GTZ_DOMAIN}/g" \
   "$SOURCE_ROOT/deploy/azure/Caddyfile" \
   > /etc/caddy/Caddyfile
+install -d -o caddy -g caddy -m 0750 /var/log/caddy
 
 install -o root -g groktimizer -m 0640 "$CONFIG_SOURCE" \
   /etc/groktimizer/groktimizer.toml
