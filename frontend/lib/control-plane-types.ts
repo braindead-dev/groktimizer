@@ -57,7 +57,7 @@ export interface ResearchProjectRecord {
     unit: string;
     direction: "higher" | "lower";
     accent: "orange" | "blue" | "lime" | "violet";
-    points: Array<{ label: string; value: number }>;
+    points: Array<{ label: string; value: number; elapsed_hours?: number }>;
   }>;
   decisions: Array<{
     id: string;

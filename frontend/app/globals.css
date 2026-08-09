@@ -924,7 +924,8 @@ textarea::placeholder { color: #a6a89f; }
 .chart-scale-label { fill: var(--muted-light); font-family: var(--font-geist-mono), monospace; font-size: 7px; text-transform: uppercase; letter-spacing: .06em; }
 .chart-main-line,
 .chart-series-halo { fill: none; stroke: currentColor; vector-effect: non-scaling-stroke; }
-.chart-series-halo { stroke-width: 7; opacity: .08; }
+.chart-dither-area { opacity: .42; pointer-events: none; }
+.chart-series-halo { stroke-width: 6; opacity: .07; }
 .chart-main-line { stroke-width: 2; }
 .chart-point { fill: var(--surface); stroke: currentColor; stroke-width: 1.75; vector-effect: non-scaling-stroke; }
 .chart-column-hit { fill: transparent; cursor: crosshair; }

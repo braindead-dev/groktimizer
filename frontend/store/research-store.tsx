@@ -124,12 +124,15 @@ function recordAgent(
 function projectFromRecord(record: ResearchProjectRecord): Project {
   const metrics = record.metrics.map((metric) => {
     const values = metric.points.map((point) => point.value);
+    const hasElapsedTimeline = metric.points.every(
+      (point) => typeof point.elapsed_hours === "number" && Number.isFinite(point.elapsed_hours),
+    );
     return {
       ...metric,
       baseline: values[0] ?? 0,
       best: metric.direction === "higher" ? Math.max(...values) : Math.min(...values),
       points: metric.points.map((point, index) => ({
-        run: index + 1,
+        run: hasElapsedTimeline ? (point.elapsed_hours as number) : index,
         value: point.value,
         label: point.label,
       })),
