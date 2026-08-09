@@ -3,6 +3,8 @@
 import hashlib
 import json
 import shlex
+from pathlib import Path
+from uuid import uuid4
 
 from groktimizer.config import Config
 from groktimizer.core.sandbox import (
@@ -76,14 +78,22 @@ else
   git checkout -B "$GTZ_BRANCH"
 fi
 grok mcp add groktimizer -- python3 -m groktimizer.mcp
-mkdir -p /var/log/gtz
+mkdir -p /var/log/gtz /var/lib/gtz
+touch /var/log/gtz/runner.log
+python3 /opt/gtz/agent_runner.py init --session-id "$GTZ_SESSION_ID"
+python3 /opt/gtz/agent_runner.py enqueue \\
+  --message-file /opt/gtz/brief.md \\
+  --display-message-file /opt/gtz/objective.md \\
+  --client-id "kickoff-$GTZ_SESSION_ID" \\
+  --turn-id "turn-$GTZ_SESSION_ID" \\
+  --sender-kind system \\
+  --sender-label "Research brief"
+tmux kill-session -t gtz 2>/dev/null || true
 tmux new-session -d -s gtz \\
   '{ . /opt/gtz/.env; } 2>/dev/null; export PATH="$HOME/.local/bin:$HOME/.grok/bin:$PATH"; \\
    export GIT_ASKPASS=/opt/gtz/git-askpass.sh GIT_TERMINAL_PROMPT=0; \\
    cd /workspace/project; \\
-   grok --always-approve ${GTZ_GROK_MODEL:+--model "$GTZ_GROK_MODEL"} \\
-   ${GTZ_REASONING_EFFORT:+--reasoning-effort "$GTZ_REASONING_EFFORT"} \\
-   -p "$(cat /opt/gtz/brief.md)" 2>&1 | tee -a /var/log/gtz/session.log'
+   exec python3 /opt/gtz/agent_runner.py daemon >>/var/log/gtz/runner.log 2>&1'
 """
 
 PASSTHROUGH_ENVS = (
@@ -178,6 +188,7 @@ async def spawn_agent(
         "GTZ_TOOLING_REPO": cfg.tooling_repo,
         "GTZ_CONFIG_JSON": cfg.model_dump_json(),
         "GTZ_BRANCH": branch_name(team, agent, role),
+        "GTZ_SESSION_ID": str(uuid4()),
     }
     model = (
         cfg.research.reconciler_model
@@ -194,6 +205,9 @@ async def spawn_agent(
     rendered = render_brief(role, cfg, team=team, agent=agent, brief=brief)
     await client.exec(name, "mkdir -p /opt/gtz")
     await client.write_file(name, "/opt/gtz/brief.md", rendered)
+    await client.write_file(name, "/opt/gtz/objective.md", brief)
+    runner_source = Path(__file__).with_name("agent_runner.py").read_text()
+    await client.write_file(name, "/opt/gtz/agent_runner.py", runner_source)
     secrets = prepare_agent_secrets(source_secrets, name, role, slot=slot)
     await client.write_file(name, "/opt/gtz/.env", render_env_file(secrets))
     await client.exec(name, "chmod 600 /opt/gtz/.env")

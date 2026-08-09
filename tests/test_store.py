@@ -16,7 +16,7 @@ def test_project_lifecycle(store):
     store.upsert_project("demo", objective="Make it fast")  # idempotent
     projects = store.list_projects()
     assert len(projects) == 1
-    assert projects[0]["status"] == "active"
+    assert projects[0]["status"] == "running"
     assert projects[0]["objective"] == "Make it fast"
     store.mark_project_stopped("demo")
     assert store.list_projects()[0]["status"] == "stopped"
@@ -39,43 +39,75 @@ def test_agent_lifecycle(store):
     assert store.list_agents("demo")[0]["terminated_at"] is not None
 
 
-def test_messages_dedup_and_order(store):
-    rows = [
-        {
-            "id": "steer-1",
-            "sandbox": "sb",
-            "role": "user",
-            "body": "hi",
-            "at": "2026-01-01T00:00:00",
-        },
-        {
-            "id": "reply-1",
-            "sandbox": "sb",
-            "role": "agent",
-            "body": "yo",
-            "at": "2026-01-01T00:00:01",
-        },
-    ]
-    assert store.insert_messages(rows) == 2
-    assert store.insert_messages(rows) == 0  # dedup by id
-    messages = store.messages_for("sb")
-    assert [m["id"] for m in messages] == ["steer-1", "reply-1"]
-    assert messages[1]["role"] == "agent"
+def turn(status="queued"):
+    return {
+        "id": "turn-1",
+        "client_id": "client-1",
+        "prompt": "full prompt",
+        "display_prompt": "go",
+        "mode": "queue",
+        "sender_kind": "operator",
+        "sender_sandbox": None,
+        "sender_label": "You",
+        "status": status,
+        "created_at": "2026-01-01T00:00:00",
+        "started_at": None,
+        "finished_at": None,
+        "error": None,
+        "revision": 1,
+    }
 
 
-def test_log_chunks_and_offset(store):
-    assert store.get_log_offset("sb") == 0
+def test_structured_turns_and_events(store):
     store.upsert_agent("sb", project="demo", team="hq", name="main", role="main")
-    store.append_log_chunk("sb", "line1\nline2\n", at="2026-01-01T00:00:00")
-    store.set_log_offset("sb", 12)
-    assert store.get_log_offset("sb") == 12
-    assert "line1" in store.log_tail("sb", max_chars=1000)
+    assert store.upsert_turns("sb", [turn()]) == 1
+    assert (
+        store.insert_turn_events(
+            "sb",
+            [
+                {
+                    "id": "event-1",
+                    "seq": 1,
+                    "turn_id": "turn-1",
+                    "type": "assistant_text",
+                    "payload": {"text": "done"},
+                    "at": "2026-01-01T00:00:01",
+                }
+            ],
+        )
+        == 1
+    )
+    updated = turn("completed")
+    updated["finished_at"] = "2026-01-01T00:00:02"
+    store.upsert_turns("sb", [updated])
+    store.set_event_cursor("sb", 1)
+    store.set_runtime("sb", {"turn_status": "idle", "queued": 0})
+
+    conversation = store.conversation_for("sb")
+    assert conversation["turns"][0]["status"] == "completed"
+    assert conversation["events"][0]["payload"] == {"text": "done"}
+    assert conversation["cursor"] == 1
+    assert conversation["runtime"]["turn_status"] == "idle"
 
 
-def test_log_tail_bounded(store):
+def test_turn_status_cannot_regress_from_an_older_revision(store):
     store.upsert_agent("sb", project="demo", team="hq", name="main", role="main")
-    for i in range(10):
-        store.append_log_chunk("sb", f"chunk-{i}\n", at="2026-01-01T00:00:00")
-    tail = store.log_tail("sb", max_chars=20)
-    assert len(tail) <= 20
-    assert "chunk-9" in tail
+    completed = turn("completed")
+    completed["revision"] = 4
+    completed["finished_at"] = "2026-01-01T00:00:02"
+    store.upsert_turns("sb", [completed])
+    stale = turn("running")
+    stale["revision"] = 2
+    store.upsert_turns("sb", [stale])
+    saved = store.conversation_for("sb")["turns"][0]
+    assert saved["status"] == "completed"
+    assert saved["revision"] == 4
+
+
+def test_store_rejects_an_unversioned_existing_schema(tmp_path):
+    import sqlite3
+
+    path = tmp_path / "legacy.db"
+    sqlite3.connect(path).execute("CREATE TABLE legacy(value TEXT)").connection.close()
+    with pytest.raises(RuntimeError, match="unsupported store schema"):
+        Store(path)

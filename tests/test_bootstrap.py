@@ -91,7 +91,10 @@ async def test_agent_roles_get_pinned_models():
     assert captured["GTZ_REASONING_EFFORT"] == "high"
     assert captured["GTZ_BRANCH"] == "agent/attn/impl3"
     setup = client.files[("gtz-demo-attn-impl3", "/opt/gtz/setup.sh")]
-    assert "GTZ_REASONING_EFFORT" in setup
+    runner = client.files[("gtz-demo-attn-impl3", "/opt/gtz/agent_runner.py")]
+    assert "agent_runner.py daemon" in setup
+    assert "GTZ_REASONING_EFFORT" in runner
+    assert "GTZ_SESSION_ID" in captured
 
 
 async def test_secrets_go_to_env_file_not_create_envs():

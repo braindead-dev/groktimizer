@@ -17,10 +17,12 @@
     "better-sqlite3": "^13.0.3",
     "dotenv": "^17.4.2",
     "lucide-react": "^0.468.0",
-    "motion": "^12.23.12",
     "next": "^16.0.0",
     "react": "^19.2.0",
-    "react-dom": "^19.2.0"
+    "react-dom": "^19.2.0",
+    "react-markdown": "^10.1.0",
+    "remark-gfm": "^4.0.1",
+    "use-stick-to-bottom": "^1.1.6"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^9.6.0",

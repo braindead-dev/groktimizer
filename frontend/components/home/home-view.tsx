@@ -4,8 +4,13 @@ import { FormEvent, KeyboardEvent, useState } from "react";
 import { ArrowRight, ArrowUp } from "lucide-react";
 import { BrandLockup } from "@/components/shared/brand-mark";
 import { StatusDot, StatusPill } from "@/components/shared/status";
-import { sendSteeringMessage, startResearchProject } from "@/lib/control-plane-client";
+import { startResearchProject } from "@/lib/control-plane-client";
 import { useResearchDispatch, useResearchState } from "@/store/research-store";
+
+function projectIdFor(objective: string) {
+  const stem = objective.toLowerCase().replace(/[^a-z0-9]+/g, "").slice(0, 17) || "research";
+  return `${stem}${crypto.randomUUID().replaceAll("-", "").slice(0, 6)}`;
+}
 
 export function HomeView() {
   const { projects, controlPlane } = useResearchState();
@@ -13,40 +18,28 @@ export function HomeView() {
   const [objective, setObjective] = useState("");
   const [launching, setLaunching] = useState(false);
   const [launchError, setLaunchError] = useState<string | null>(null);
-  const liveProject = projects.find((project) => project.source === "live");
-  const liveOrchestrator = liveProject?.orchestrator.sandboxName ? liveProject.orchestrator : null;
+  const liveProjects = projects.filter((project) => project.source === "live");
 
   async function launch(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const trimmed = objective.trim();
     if (!trimmed || launching) return;
     setLaunchError(null);
-    if (liveProject && liveOrchestrator?.sandboxName) {
-      setLaunching(true);
-      try {
-        await sendSteeringMessage(liveOrchestrator.sandboxName, trimmed);
-        setObjective("");
-        dispatch({ type: "select", selection: { type: "agent", projectId: liveProject.id, agentId: liveOrchestrator.id } });
-      } catch (error) {
-        setLaunchError(error instanceof Error ? error.message : "The orchestrator could not be reached.");
-      } finally {
-        setLaunching(false);
-      }
-      return;
-    }
-    if (controlPlane.mode !== "live") {
+    if (controlPlane.mode !== "live" || !controlPlane.project) {
       setLaunchError("The live control plane is not connected. Check groktimizer.toml and the local Blaxel credentials.");
       return;
     }
 
+    const projectName = liveProjects.length === 0 ? controlPlane.project : projectIdFor(trimmed);
     setLaunching(true);
+    dispatch({ type: "project-launch-requested", project: projectName, objective: trimmed });
+    setObjective("");
     try {
-      await startResearchProject(trimmed);
-      setObjective("");
+      await startResearchProject(trimmed, projectName);
       dispatch({ type: "refresh-control-plane" });
-      dispatch({ type: "select", selection: { type: "project", projectId: `live-${controlPlane.project}` } });
     } catch (error) {
-      setLaunchError(error instanceof Error ? error.message : "The main orchestrator could not be started.");
+      const message = error instanceof Error ? error.message : "The main orchestrator could not be started.";
+      dispatch({ type: "project-launch-failed", project: projectName, error: message });
     } finally {
       setLaunching(false);
     }
@@ -87,7 +80,7 @@ export function HomeView() {
           <button onClick={() => dispatch({ type: "select", selection: { type: "activity" } })}>View all activity <ArrowRight size={14} /></button>
         </div>
         <div className="recent-grid">
-          {(liveProject ? [liveProject] : projects.slice(0, 1)).map((project, index) => {
+          {(liveProjects.length ? liveProjects.slice(0, 2) : projects.slice(0, 1)).map((project, index) => {
             const projectAgents = [
               project.orchestrator,
               project.implementor,

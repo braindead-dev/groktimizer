@@ -1,6 +1,6 @@
 "use client";
 
-import type { AgentStreamEvent, ChatMessage, ControlPlaneResponse } from "@/lib/control-plane-types";
+import type { AgentStreamEvent, ChatTurn, ControlPlaneResponse } from "@/lib/control-plane-types";
 
 export async function fetchControlPlane(): Promise<ControlPlaneResponse> {
   const response = await fetch("/api/control-plane", { cache: "no-store" });
@@ -8,45 +8,87 @@ export async function fetchControlPlane(): Promise<ControlPlaneResponse> {
   return response.json() as Promise<ControlPlaneResponse>;
 }
 
-export async function sendSteeringMessage(sandbox: string, message: string) {
+export async function sendSteeringMessage(
+  sandbox: string,
+  message: string,
+  clientId: string,
+  mode: "queue" | "interrupt" = "queue",
+  retry = false,
+) {
   const response = await fetch(`/api/agents/${encodeURIComponent(sandbox)}/messages`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ message }),
+    body: JSON.stringify({ message, clientId, mode, retry }),
   });
-  if (!response.ok) throw new Error("The steering message could not be delivered");
-  return response.json() as Promise<{ sent: true; id: string | null }>;
+  const payload = await response.json().catch(() => null) as {
+    sent?: boolean;
+    id?: string;
+    turnId?: string;
+    status?: "queued" | "running";
+    mode?: "queue" | "interrupt";
+    turn?: ChatTurn;
+    error?: string;
+    code?: string;
+  } | null;
+  if (!response.ok || !payload?.sent || !payload.turn) {
+    const error = new Error(payload?.error ?? "The steering message could not be delivered");
+    Object.assign(error, { code: payload?.code });
+    throw error;
+  }
+  return payload as {
+    sent: true;
+    id: string;
+    turnId: string;
+    status: "queued" | "running";
+    mode: "queue" | "interrupt";
+    turn: ChatTurn;
+  };
 }
 
-export async function fetchAgentHistory(sandbox: string) {
-  const response = await fetch(`/api/agents/${encodeURIComponent(sandbox)}/history`, { cache: "no-store" });
-  if (!response.ok) throw new Error("Unable to load message history");
-  return response.json() as Promise<{ messages: ChatMessage[]; log: string }>;
-}
-
-export async function deleteAgent(sandbox: string) {
+export async function stopAgent(sandbox: string) {
   const response = await fetch(`/api/agents/${encodeURIComponent(sandbox)}`, { method: "DELETE" });
   const payload = await response.json().catch(() => null) as { deleted?: boolean; error?: string } | null;
   if (!response.ok || !payload?.deleted) {
-    throw new Error(payload?.error ?? "The agent could not be deleted");
+    throw new Error(payload?.error ?? "The agent could not be stopped");
   }
   return payload as { deleted: true };
 }
 
-export async function startResearchProject(objective: string) {
+export async function repairAgent(sandbox: string) {
+  const response = await fetch(`/api/agents/${encodeURIComponent(sandbox)}/repair`, {
+    method: "POST",
+  });
+  const payload = await response.json().catch(() => null) as {
+    repaired?: boolean;
+    session_id?: string;
+    error?: string;
+  } | null;
+  if (!response.ok || !payload?.repaired) {
+    throw new Error(payload?.error ?? "The agent runner could not be repaired");
+  }
+  return payload as { repaired: true; session_id: string };
+}
+
+export async function startResearchProject(objective: string, project: string) {
   const response = await fetch("/api/projects", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ objective }),
+    body: JSON.stringify({ objective, project }),
   });
   if (!response.ok) {
     const payload = await response.json().catch(() => null) as { error?: string } | null;
     throw new Error(payload?.error ?? "The project orchestrator could not be started");
   }
-  return response.json() as Promise<{ started: true; sandbox: string; state: "provisioning" }>;
+  return response.json() as Promise<{
+    started: true;
+    project: string;
+    sandbox: string;
+    state: "provisioning" | "running";
+    existing?: boolean;
+  }>;
 }
 
-export async function deleteResearchProject(project: string) {
+export async function stopResearchProject(project: string) {
   const response = await fetch(`/api/projects/${encodeURIComponent(project)}`, { method: "DELETE" });
   const payload = await response.json().catch(() => null) as {
     deleted?: boolean;
@@ -55,7 +97,7 @@ export async function deleteResearchProject(project: string) {
     error?: string;
   } | null;
   if (!response.ok || !payload?.deleted) {
-    throw new Error(payload?.error ?? "The project could not be deleted");
+    throw new Error(payload?.error ?? "The research run could not be stopped");
   }
   return payload as { deleted: true; project: string; sandboxes: number };
 }

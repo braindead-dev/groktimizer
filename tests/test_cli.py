@@ -1,6 +1,14 @@
-import pytest
+import json
 
-from groktimizer.cli.main import collect_snapshot, format_tree, start_main_orchestrator
+import pytest
+from typer import BadParameter
+
+from groktimizer.cli.main import (
+    _sandbox_project,
+    collect_snapshot,
+    format_tree,
+    start_main_orchestrator,
+)
 from groktimizer.config import Config
 from groktimizer.core.registry import AgentInfo
 from groktimizer.core.sandbox import ExecResult, agent_labels
@@ -15,6 +23,12 @@ def test_format_tree():
     ]
     out = format_tree(agents)
     assert out.index("main") < out.index("attn") < out.index("impl-1")
+
+
+def test_sandbox_project_supports_non_default_projects():
+    assert _sandbox_project("gtz-latency123-hq-main") == "latency123"
+    with pytest.raises(BadParameter, match="invalid groktimizer sandbox name"):
+        _sandbox_project("other-project")
 
 
 async def test_collect_snapshot_is_json_safe():
@@ -47,7 +61,35 @@ async def test_collect_snapshot_is_json_safe():
     assert all(agent["running"] is True for agent in snapshot["agents"])
     assert snapshot["agents"][1]["branch"] == "team/attn"
     assert snapshot["caps"]["max_teams"] == 5
+    assert snapshot["projects"][0]["project"] == "demo"
     assert set(snapshot["integrations"]) == {"blaxel", "runpod", "xai", "github"}
+
+
+async def test_collect_snapshot_includes_multiple_projects():
+    client = FakeSandboxClient()
+    await client.create(
+        "gtz-alpha-hq-main",
+        "image",
+        "region",
+        agent_labels("alpha", "hq", "main", "main"),
+        {},
+    )
+    await client.create(
+        "gtz-beta-hq-main",
+        "image",
+        "region",
+        agent_labels("beta", "hq", "main", "main"),
+        {},
+    )
+    client.exec_responses["tmux has-session"] = ExecResult("running\n1723123456\n", 0)
+    cfg = Config(
+        project="alpha",
+        shared_repo="git@example.com/work.git",
+        tooling_repo="git@example.com/tools.git",
+    )
+    snapshot = await collect_snapshot(cfg, client)
+    assert [project["project"] for project in snapshot["projects"]] == ["alpha", "beta"]
+    assert snapshot["agents"][0]["project"] == "alpha"
 
 
 async def test_start_main_orchestrator_refuses_duplicate():
@@ -69,9 +111,7 @@ async def test_start_main_orchestrator_refuses_duplicate():
         await start_main_orchestrator(cfg, client, "brief", {})
 
 
-async def test_project_cap_blocks_third_project(tmp_path):
-    from groktimizer.core.store import Store
-
+async def test_project_count_does_not_block_another_configured_project():
     client = FakeSandboxClient()
     await client.create(
         "gtz-alpha-hq-main", "img", "r", agent_labels("alpha", "hq", "main", "main"), {}
@@ -80,9 +120,8 @@ async def test_project_cap_blocks_third_project(tmp_path):
         "gtz-beta-hq-main", "img", "r", agent_labels("beta", "hq", "main", "main"), {}
     )
     cfg = Config(project="gamma", shared_repo="git@x:y.git", tooling_repo="https://g/o/r.git")
-    with Store(tmp_path / "gtz.db") as store:
-        with pytest.raises(ValueError, match="active project cap"):
-            await start_main_orchestrator(cfg, client, "brief", {}, store)
+    name = await start_main_orchestrator(cfg, client, "brief", {})
+    assert name == "gtz-gamma-hq-main"
 
 
 async def test_snapshot_ingests_into_store(tmp_path):
@@ -92,17 +131,28 @@ async def test_snapshot_ingests_into_store(tmp_path):
     await client.create(
         "gtz-demo-hq-main", "img", "r", agent_labels("demo", "hq", "main", "main"), {}
     )
-    client.exec_responses["tail -n"] = ExecResult(
-        stdout='{"id":"steer-9","role":"user","body":"hi","at":"2026-01-01T00:00:00"}\n',
+    client.exec_responses["agent_runner.py export"] = ExecResult(
+        stdout=json.dumps(
+            {
+                "session_id": "session-1",
+                "runtime_id": "runtime-1",
+                "cursor": 0,
+                "active_turn_id": None,
+                "turn_status": "idle",
+                "queued": 0,
+                "turns": [],
+                "events": [],
+            }
+        )
+        + "\n",
         exit_code=0,
     )
-    client.exec_responses["wc -c"] = ExecResult(stdout="0", exit_code=0)
     cfg = Config(project="demo", shared_repo="git@x:y.git", tooling_repo="https://g/o/r.git")
     with Store(tmp_path / "gtz.db") as store:
         await collect_snapshot(cfg, client, store)
         assert store.list_projects()[0]["name"] == "demo"
         assert store.list_agents("demo")[0]["sandbox"] == "gtz-demo-hq-main"
-        assert store.messages_for("gtz-demo-hq-main")[0]["id"] == "steer-9"
+        assert store.runtime_for("gtz-demo-hq-main")["session_id"] == "session-1"
 
 
 async def test_snapshot_marks_vanished_agents_terminated(tmp_path):

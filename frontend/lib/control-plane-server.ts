@@ -8,18 +8,25 @@ import type { BaselineSnapshot } from "@/lib/control-plane-types";
 const execFileAsync = promisify(execFile);
 
 export function controlPlaneRoot() {
-  return process.env.GTZ_ROOT ?? resolve(process.cwd(), "..");
+  if (process.env.GTZ_ROOT) return process.env.GTZ_ROOT;
+  const cwd = process.cwd();
+  if (existsSync(resolve(cwd, "groktimizer.toml"))) return cwd;
+  if (existsSync(resolve(cwd, "..", "groktimizer.toml"))) return resolve(cwd, "..");
+  return resolve(cwd, "..");
 }
 
 export function hasControlPlaneConfig() {
+  loadControlPlaneEnv();
   return existsSync(resolve(controlPlaneRoot(), "groktimizer.toml"));
 }
 
 export function uvExecutable() {
+  loadControlPlaneEnv();
   return process.env.GTZ_UV_BIN ?? "uv";
 }
 
 export async function runGtz(args: string[], timeout = 20_000) {
+  loadControlPlaneEnv();
   const { stdout } = await execFileAsync(uvExecutable(), ["run", "gtz", ...args], {
     cwd: controlPlaneRoot(),
     timeout,

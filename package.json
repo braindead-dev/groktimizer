@@ -1,0 +1,8 @@
+{
+  "name": "groktimizer-workspace",
+  "private": true,
+  "scripts": {
+    "dev": "npm --prefix frontend run dev",
+    "check": "npm --prefix frontend run check"
+  }
+}

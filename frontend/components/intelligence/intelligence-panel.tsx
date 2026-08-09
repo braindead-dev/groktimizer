@@ -6,22 +6,25 @@ import {
   ChevronRight,
   CircleGauge,
   Clock3,
+  Cpu,
   Network,
   Radio,
   Terminal,
+  Trash2,
   Workflow,
   X,
 } from "lucide-react";
 import { StatusDot, StatusPill } from "@/components/shared/status";
+import { stopAgent } from "@/lib/control-plane-client";
 import type { Agent, Project, ResearchTeam } from "@/lib/types";
-import { useResearchDispatch } from "@/store/research-store";
+import { useResearchDispatch, useResearchState } from "@/store/research-store";
 
-function PanelShell({ title, children }: { title: string; children: React.ReactNode }) {
+function PanelShell({ title, subtitle, children }: { title: string; subtitle: string; children: React.ReactNode }) {
   const dispatch = useResearchDispatch();
   return (
     <section className="intelligence-panel">
       <header className="intelligence-header">
-        <h2>{title}</h2>
+        <div><span>{subtitle}</span><h2>{title}</h2></div>
         <div>
           <button aria-label="Close panel" onClick={() => dispatch({ type: "toggle-detail" })}><X size={15} /></button>
         </div>
@@ -47,7 +50,7 @@ function RegistryRow({ project, agent, scope }: { project: Project; agent: Agent
       onClick={() => dispatch({ type: "select", selection: { type: "agent", projectId: project.id, agentId: agent.id } })}
     >
       <StatusDot status={agent.status} />
-      <span><strong>{agent.name}</strong><small>{scope}</small></span>
+      <span><strong>{agent.name}</strong><small>{scope} · {agent.sandboxName}</small></span>
       <em>{agent.elapsed}</em>
       <ChevronRight size={13} />
     </button>
@@ -56,12 +59,13 @@ function RegistryRow({ project, agent, scope }: { project: Project; agent: Agent
 
 function ProjectControl({ project }: { project: Project }) {
   const dispatch = useResearchDispatch();
+  const { controlPlane } = useResearchState();
   const [tab, setTab] = useState<"map" | "registry">("map");
   const agents = registeredAgents(project);
   const active = agents.filter((agent) => agent.status === "running" || agent.status === "thinking");
 
   return (
-    <PanelShell title="Research control">
+    <PanelShell title="Research control" subtitle="Orchestrator">
       <div className="panel-tabs">
         <button className={tab === "map" ? "active" : ""} onClick={() => setTab("map")}><Network size={13} /> System map</button>
         <button className={tab === "registry" ? "active" : ""} onClick={() => setTab("registry")}><Activity size={13} /> Registry</button>
@@ -69,10 +73,13 @@ function ProjectControl({ project }: { project: Project }) {
       {tab === "map" ? (
           <div className="control-scroll">
             <div className="system-metrics">
-              <div><span>Agents</span><strong>{agents.length}</strong></div>
-              <div><span>Running</span><strong>{active.length}</strong></div>
-              <div><span>Teams</span><strong>{project.teams.length}</strong></div>
+              <div><span>Sandboxes</span><strong>{agents.length}</strong><small>Blaxel registry</small></div>
+              <div><span>Running</span><strong>{active.length}</strong><small>tmux sessions</small></div>
+              <div><span>Teams</span><strong>{project.teams.length}/{controlPlane.maxTeams ?? "—"}</strong><small>registered tracks</small></div>
             </div>
+            {controlPlane.maxTeams !== undefined && project.teams.length >= controlPlane.maxTeams ? (
+              <div className="capacity-notice"><strong>Team cap reached</strong><span>Stop an unproductive team sandbox before asking the main orchestrator to create another track.</span></div>
+            ) : null}
             <div className="topology-canvas topology-canvas-live">
               <div className="canvas-grid" />
               <button
@@ -81,7 +88,7 @@ function ProjectControl({ project }: { project: Project }) {
                 disabled={!project.orchestrator.sandboxName}
               >
                 <span className="node-ripple" /><div><Network size={18} /></div>
-                <strong>Orchestrator</strong><small>{project.orchestrator.sandboxName ? project.orchestrator.status : "not registered"}</small>
+                <strong>MAIN</strong><small>{project.orchestrator.sandboxName ? project.orchestrator.status : "not registered"}</small>
               </button>
               <div className="team-node-grid topology-team-list">
                 {project.teams.map((team) => {
@@ -94,24 +101,24 @@ function ProjectControl({ project }: { project: Project }) {
                       disabled={!team.orchestrator.sandboxName}
                     >
                       <span className="topology-team-index"><Workflow size={13} /></span>
-                      <span><strong>{team.name}</strong><small>{team.agents.length} agents</small></span>
+                      <span><strong>{team.name}</strong><small>{team.agents.length} implementers registered</small></span>
                       <span className="topology-team-live"><StatusDot status={team.orchestrator.status} /> {running} running</span>
                       <ChevronRight size={13} />
                     </button>
                   );
                 })}
                 {!project.teams.length ? (
-                  <div className="live-empty-state"><Workflow size={17} /><strong>No teams yet</strong><span>Teams will appear here when they are created.</span></div>
+                  <div className="live-empty-state"><Workflow size={17} /><strong>No teams registered yet</strong><span>The main orchestrator creates team sandboxes through the Groktimizer MCP server.</span></div>
                 ) : null}
               </div>
             </div>
           </div>
         ) : (
           <div className="control-scroll registry-view">
-            <div className="subsection-title"><span>Agents</span><small>{agents.length} total</small></div>
+            <div className="subsection-title"><span><Radio size={12} /> Live Blaxel registry</span><small>{agents.length} sandboxes</small></div>
             <div className="registry-list">
               {agents.map((agent) => <RegistryRow key={agent.id} project={project} agent={agent} scope={agent.role} />)}
-              {!agents.length ? <div className="live-empty-state"><Radio size={17} /><strong>No agents yet</strong><span>Launch a project to create the orchestrator.</span></div> : null}
+              {!agents.length ? <div className="live-empty-state"><Radio size={17} /><strong>Registry is empty</strong><span>Launch a project to provision the main orchestrator.</span></div> : null}
             </div>
           </div>
         )}
@@ -120,18 +127,22 @@ function ProjectControl({ project }: { project: Project }) {
 }
 
 function TeamControl({ project, team }: { project: Project; team: ResearchTeam }) {
+  const { controlPlane } = useResearchState();
   const teamAgents = [team.orchestrator, ...team.agents].filter((agent) => agent.sandboxName);
   const active = teamAgents.filter((agent) => agent.status === "running" || agent.status === "thinking").length;
 
   return (
-    <PanelShell title={team.name}>
+    <PanelShell title={team.name} subtitle="Team">
       <div className="team-control-scroll">
         <div className="team-summary-band">
-          <div><StatusPill status={team.orchestrator.status} /></div>
-          <strong>{active}<small> active</small></strong>
+          <div><StatusPill status={team.orchestrator.status} /><p>{team.thesis}</p></div>
+          <strong>{active}<small> running</small></strong>
         </div>
         <section className="team-roster-section registry-section">
-          <div className="subsection-title"><span><Workflow size={12} /> Agents</span><small>{teamAgents.length} total</small></div>
+          <div className="subsection-title"><span><Workflow size={12} /> Registered team</span><small>{team.agents.length}/{controlPlane.maxAgentsPerTeam ?? "—"} implementers</small></div>
+          {controlPlane.maxAgentsPerTeam !== undefined && team.agents.length >= controlPlane.maxAgentsPerTeam ? (
+            <div className="capacity-notice"><strong>Implementer cap reached</strong><span>Open an implementer below and stop it before asking this team to spawn another.</span></div>
+          ) : null}
           <div className="registry-list">
             {teamAgents.map((agent) => <RegistryRow key={agent.id} project={project} agent={agent} scope={agent.role} />)}
           </div>
@@ -141,9 +152,30 @@ function TeamControl({ project, team }: { project: Project; team: ResearchTeam }
   );
 }
 
-function AgentControl({ agent }: { agent: Agent }) {
+function AgentControl({ project, agent, team }: { project: Project; agent: Agent; team?: ResearchTeam }) {
+  const dispatch = useResearchDispatch();
+  const [confirmingStop, setConfirmingStop] = useState(false);
+  const [stopping, setStopping] = useState(false);
+  const [stopError, setStopError] = useState<string | null>(null);
+  const canStopIndividually = Boolean(agent.sandboxName)
+    && (agent.role === "researcher" || agent.role === "implementor");
+
+  async function handleStop() {
+    if (!agent.sandboxName || stopping) return;
+    setStopping(true);
+    setStopError(null);
+    try {
+      await stopAgent(agent.sandboxName);
+      dispatch({ type: "select", selection: { type: "project", projectId: project.id } });
+      dispatch({ type: "refresh-control-plane" });
+    } catch (error) {
+      setStopError(error instanceof Error ? error.message : "The agent could not be stopped.");
+      setStopping(false);
+    }
+  }
+
   return (
-    <PanelShell title="Sandbox details">
+    <PanelShell title="Sandbox session" subtitle={team?.name ?? agent.role}>
       <div className="researcher-scroll agent-live-details">
         <div className="experiment-headline">
           <div><StatusPill status={agent.status} /><h3>{agent.name}</h3><p>{agent.task}</p></div>
@@ -154,7 +186,23 @@ function AgentControl({ agent }: { agent: Agent }) {
           <div><Workflow size={13} /><span>Git branch</span><strong>{agent.branchName ?? "Not assigned"}</strong></div>
           <div><Radio size={13} /><span>Session</span><strong>{agent.status}</strong></div>
           <div><Clock3 size={13} /><span>Log activity</span><strong>{agent.elapsed}</strong></div>
+          <div><Cpu size={13} /><span>Transport</span><strong>{agent.sandboxName ? "SSE · gtz watch" : "Unavailable"}</strong></div>
         </section>
+        <div className="agent-live-note"><Radio size={15} /><p><strong>Structured Grok session</strong>Responses, reasoning, and tool activity stream into chat. Raw runner output stays in Diagnostics.</p></div>
+        {canStopIndividually ? (
+          <div className="agent-stop-card">
+            <div><strong>Free this agent slot</strong><span>Stops and removes this sandbox. Completed code remains on its Git branch.</span></div>
+            {confirmingStop ? (
+              <div>
+                <button onClick={() => setConfirmingStop(false)} disabled={stopping}>Cancel</button>
+                <button className="danger-action" onClick={() => void handleStop()} disabled={stopping}>{stopping ? "Stopping…" : "Stop agent"}</button>
+              </div>
+            ) : (
+              <button className="delete-project-action" onClick={() => setConfirmingStop(true)}><Trash2 size={12} /> Stop agent</button>
+            )}
+            {stopError ? <em>{stopError}</em> : null}
+          </div>
+        ) : null}
       </div>
     </PanelShell>
   );
@@ -163,5 +211,5 @@ function AgentControl({ agent }: { agent: Agent }) {
 export function IntelligencePanel({ project, agent, team }: { project: Project; agent: Agent; team?: ResearchTeam }) {
   if (agent.role === "orchestrator") return <ProjectControl project={project} />;
   if (agent.role === "team-orchestrator" && team) return <TeamControl project={project} team={team} />;
-  return <AgentControl agent={agent} />;
+  return <AgentControl project={project} agent={agent} team={team} />;
 }

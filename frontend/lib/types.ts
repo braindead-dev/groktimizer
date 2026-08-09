@@ -1,16 +1,7 @@
 export type AgentRole = "orchestrator" | "team-orchestrator" | "researcher" | "implementor";
 export type AgentStatus = "running" | "thinking" | "queued" | "complete" | "blocked";
 export type ProjectStatus = "running" | "paused" | "complete";
-
-export type MessageKind = "assistant" | "user" | "event" | "reasoning" | "finding";
-
-export interface Message {
-  id: string;
-  kind: MessageKind;
-  body: string;
-  time: string;
-  label?: string;
-}
+export type ProjectLifecycle = "idle" | "provisioning" | "running" | "failed" | "stopped";
 
 export interface Agent {
   id: string;
@@ -23,7 +14,6 @@ export interface Agent {
   elapsed: string;
   sandboxName?: string;
   branchName?: string;
-  messages: Message[];
 }
 
 export interface ResearchTeam {
@@ -52,6 +42,7 @@ export interface Decision {
 
 export interface Project {
   id: string;
+  projectName?: string;
   source?: "baseline" | "live";
   name: string;
   shortName: string;
@@ -67,10 +58,17 @@ export interface Project {
   implementor: Agent;
   teams: ResearchTeam[];
   decisions: Decision[];
+  lifecycle?: ProjectLifecycle;
+  lifecycleError?: string | null;
 }
 
 export type ViewSelection =
   | { type: "home" }
   | { type: "activity" }
   | { type: "project"; projectId: string }
-  | { type: "agent"; projectId: string; agentId: string };
+  | {
+      type: "agent";
+      projectId: string;
+      agentId: string;
+      initialMessage?: { clientId: string; body: string; mode: "queue" | "interrupt" };
+    };
