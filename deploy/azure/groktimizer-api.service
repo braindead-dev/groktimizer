@@ -1,0 +1,37 @@
+[Unit]
+Description=Groktimizer control-plane API
+Requires=groktimizer-secrets.service
+After=network-online.target groktimizer-secrets.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=groktimizer
+Group=groktimizer
+WorkingDirectory=/opt/groktimizer
+EnvironmentFile=/run/groktimizer/secrets.env
+Environment=GTZ_CONFIG=/etc/groktimizer/groktimizer.toml
+Environment=GTZ_DB=/var/lib/groktimizer/groktimizer.db
+Environment=GTZ_PUBLIC_URL=https://__GTZ_DOMAIN__
+Environment=GTZ_API_HOST=127.0.0.1
+Environment=GTZ_API_PORT=8080
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/opt/groktimizer/.venv/bin/gtz-api
+Restart=always
+RestartSec=3
+TimeoutStartSec=30
+TimeoutStopSec=30
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+ReadWritePaths=/var/lib/groktimizer /run/groktimizer
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+LockPersonality=yes
+
+[Install]
+WantedBy=multi-user.target
+
