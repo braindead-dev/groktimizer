@@ -236,6 +236,8 @@ button:disabled {
   letter-spacing: -0.02em;
 }
 
+.sidebar .brand-wordmark-image { width: 150px; height: auto; }
+
 .sidebar-collapse-button {
   width: 28px;
   height: 28px;
@@ -520,7 +522,7 @@ button:disabled {
 .home-view {
   height: 100%;
   display: grid;
-  grid-template-rows: minmax(240px, 58%) minmax(180px, 42%);
+  grid-template-rows: minmax(240px, 54%) minmax(180px, 46%);
   overflow: hidden;
 }
 
@@ -533,7 +535,7 @@ button:disabled {
   align-items: center;
   justify-content: center;
   margin: 0 auto;
-  padding: clamp(128px, 18vh, 168px) 0 0;
+  padding: clamp(246px, 35vh, 310px) 0 0;
   text-align: center;
 }
 
@@ -612,9 +614,9 @@ textarea::placeholder { color: #a6a89f; }
   min-height: 0;
   display: flex;
   flex-direction: column;
-  max-width: 1120px;
+  max-width: 560px;
   margin: 0 auto;
-  padding: clamp(10px, 2vh, 18px) 34px clamp(14px, 3vh, 40px);
+  padding: clamp(6px, 1vh, 10px) 0;
   overflow: hidden;
 }
 
@@ -649,10 +651,10 @@ textarea::placeholder { color: #a6a89f; }
   min-height: 0;
   flex: 0 0 auto;
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  grid-auto-rows: clamp(112px, 15vh, 142px);
+  grid-template-columns: minmax(0, 220px);
+  grid-auto-rows: auto;
   gap: 10px;
-  margin-top: clamp(10px, 2vh, 21px);
+  margin-top: 6px;
 }
 
 .recent-project {
@@ -682,7 +684,8 @@ textarea::placeholder { color: #a6a89f; }
 }
 
 .recent-project-top > strong { color: var(--ink); font-size: 12px; font-weight: 580; }
-.recent-project-top .status-pill { padding: 0; border-radius: 0; background: transparent; }
+.recent-project-top .status-pill { margin-left: auto; padding: 0; border-radius: 0; background: transparent; }
+.recent-project-agent-count { display: inline-flex; align-items: center; gap: 6px; margin-left: auto; color: var(--muted); }
 .recent-project-objective {
   display: -webkit-box;
   overflow: hidden;
@@ -1389,8 +1392,8 @@ textarea::placeholder { color: var(--muted-light); }
 }
 
 @media (max-width: 760px) {
-  .home-view { grid-template-rows: minmax(250px, 58%) minmax(170px, 42%); }
-  .launch-hero { width: calc(100% - 28px); min-height: 0; padding-top: 128px; }
+  .home-view { grid-template-rows: minmax(250px, 54%) minmax(170px, 46%); }
+  .launch-hero { width: calc(100% - 28px); min-height: 0; padding-top: 230px; }
   .recent-runs { padding-left: 16px; padding-right: 16px; }
   .recent-grid { grid-template-columns: 1fr; }
   .recent-project { min-height: 0; }

@@ -3,7 +3,7 @@
 import { FormEvent, KeyboardEvent, useState } from "react";
 import { ArrowRight, ArrowUp } from "lucide-react";
 import { BrandLockup } from "@/components/shared/brand-mark";
-import { StatusPill } from "@/components/shared/status";
+import { StatusDot, StatusPill } from "@/components/shared/status";
 import { sendSteeringMessage, startResearchProject } from "@/lib/control-plane-client";
 import { useResearchDispatch, useResearchState } from "@/store/research-store";
 
@@ -87,28 +87,28 @@ export function HomeView() {
           <button onClick={() => dispatch({ type: "select", selection: { type: "activity" } })}>View all activity <ArrowRight size={14} /></button>
         </div>
         <div className="recent-grid">
-          {projects.slice(0, 3).map((project, index) => {
+          {(liveProject ? [liveProject] : projects.slice(0, 1)).map((project, index) => {
             const projectAgents = [
               project.orchestrator,
               project.implementor,
               ...project.teams.flatMap((team) => [team.orchestrator, ...team.agents]),
             ].filter((agent) => agent.sandboxName);
-            const active = projectAgents.filter((agent) => agent.status === "running" || agent.status === "thinking").length;
             return (
               <button
                 className={`recent-project recent-project-${index + 1}`}
                 key={project.id}
                 onClick={() => dispatch({ type: "select", selection: { type: "project", projectId: project.id } })}
               >
-                <div className="recent-project-top"><strong>{project.shortName}</strong><StatusPill status={project.status} /></div>
-                <p className="recent-project-objective">{project.objective}</p>
-                <footer>
+                <div className="recent-project-top">
+                  <strong>{project.shortName}</strong>
                   {project.source === "live" ? (
-                    <strong>{active} active agents</strong>
-                  ) : (
-                    <><strong>{project.best}<small>{project.unit}</small></strong><span>{project.metric}</span></>
-                  )}
-                </footer>
+                    <span className="recent-project-agent-count"><StatusDot status={project.status} />{projectAgents.length} agents</span>
+                  ) : <StatusPill status={project.status} />}
+                </div>
+                <p className="recent-project-objective">{project.objective}</p>
+                {project.source !== "live" ? (
+                  <footer><strong>{project.best}<small>{project.unit}</small></strong><span>{project.metric}</span></footer>
+                ) : null}
               </button>
             );
           })}

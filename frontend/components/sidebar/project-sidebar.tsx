@@ -14,7 +14,7 @@ import {
   PanelLeftOpen,
   Workflow,
 } from "lucide-react";
-import { BrandMark } from "@/components/shared/brand-mark";
+import { BrandLockup, BrandMark } from "@/components/shared/brand-mark";
 import { StatusDot } from "@/components/shared/status";
 import type { Agent, Project, ResearchTeam, ViewSelection } from "@/lib/types";
 import { useResearchDispatch, useResearchState } from "@/store/research-store";
@@ -165,8 +165,7 @@ export function ProjectSidebar() {
     >
       <div className="sidebar-head">
         <button className="brand-button" onClick={() => dispatch({ type: "select", selection: { type: "home" } })}>
-          <BrandMark />
-          <span>groktimizer</span>
+          {sidebarCollapsed ? <BrandMark /> : <BrandLockup />}
         </button>
         <button
           className="sidebar-collapse-button"
