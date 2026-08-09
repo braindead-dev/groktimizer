@@ -28,15 +28,23 @@ DEFAULT_BASE_URL = "https://xwdq0i6koerlhu-8000.proxy.runpod.net/v1"
 DEFAULT_MODEL = "grok-2-fast"
 DEFAULT_ALIAS = "groktimized-2"
 DEFAULT_NAME = "Groktimized 2"
+STANDARD_BASE_URL = "https://z08tqd2khleyx4-8000.proxy.runpod.net/v1"
+STANDARD_MODEL = "grok-2"
+STANDARD_ALIAS = "grok-2-normal"
+STANDARD_NAME = "Grok 2"
 LEGACY_ALIASES = ("groktimizer-fast",)
 MANAGED_DESCRIPTION = "Accelerated Grok 2 deployment by Groktimizer"
+STANDARD_MANAGED_DESCRIPTION = "Grok 2 deployment managed by Groktimizer"
 MANAGED_DESCRIPTIONS = {
     MANAGED_DESCRIPTION,
+    STANDARD_MANAGED_DESCRIPTION,
+    "Standard Grok 2 deployment",
     "Optimized Grok 2 deployment by Groktimizer",
     "Optimized Grok deployment managed by Groktimizer",
 }
-TRUSTED_PUBLIC_ENDPOINTS = {DEFAULT_BASE_URL}
-UI_PATCH_VERSION = "1.0.0"
+TRUSTED_PUBLIC_ENDPOINTS = {DEFAULT_BASE_URL, STANDARD_BASE_URL}
+ADVERTISED_MODEL_ALIASES = {DEFAULT_MODEL: {"grok-2-madmax"}}
+UI_PATCH_VERSION = "1.1.0"
 UI_PATCH_RELEASE = f"grok-build-ui-v{UI_PATCH_VERSION}"
 UI_PATCH_ASSET_BASE = (
     f"https://github.com/braindead-dev/groktimizer/releases/download/{UI_PATCH_RELEASE}"
@@ -66,7 +74,7 @@ class BinaryAsset:
 UI_PATCH_ASSETS = {
     ("Darwin", "arm64"): BinaryAsset(
         url=f"{UI_PATCH_ASSET_BASE}/groktimized-grok-build-darwin-arm64.zip",
-        sha256="c3a012659c503be2a6c8a4e7269a18ca31ce5b898bb728337a888c2ace0b677b",
+        sha256="4ecc2e1c2e374b7bcbf1f896cef0e05a3748df4aee4ad7d3e58431868b3f27f9",
     ),
 }
 
@@ -85,6 +93,7 @@ class ModelConfig:
     model: str = DEFAULT_MODEL
     alias: str = DEFAULT_ALIAS
     name: str = DEFAULT_NAME
+    description: str = MANAGED_DESCRIPTION
     context_window: int = 32_768
     max_completion_tokens: int = 8_192
     api_key_env: str | None = None
@@ -127,7 +136,7 @@ def validate_auth(config: ModelConfig) -> None:
         )
 
 
-def render_model_block(config: ModelConfig) -> str:
+def render_model_table(config: ModelConfig) -> str:
     credential = (
         f"env_key = {_toml_string(config.api_key_env)}"
         if config.api_key_env
@@ -135,20 +144,27 @@ def render_model_block(config: ModelConfig) -> str:
     )
     return "\n".join(
         [
-            BEGIN_MARKER,
             f"[model.{_toml_string(config.alias)}]",
             f"model = {_toml_string(config.model)}",
             f"base_url = {_toml_string(config.base_url)}",
             f"name = {_toml_string(config.name)}",
-            f"description = {_toml_string(MANAGED_DESCRIPTION)}",
+            f"description = {_toml_string(config.description)}",
             'api_backend = "chat_completions"',
             credential,
             f"context_window = {config.context_window}",
             f"max_completion_tokens = {config.max_completion_tokens}",
             "supports_backend_search = false",
-            END_MARKER,
         ]
     )
+
+
+def render_model_blocks(configs: tuple[ModelConfig, ...]) -> str:
+    tables = "\n\n".join(render_model_table(config) for config in configs)
+    return f"{BEGIN_MARKER}\n{tables}\n{END_MARKER}"
+
+
+def render_model_block(config: ModelConfig) -> str:
+    return render_model_blocks((config,))
 
 
 def replace_managed_block(existing: str, block: str) -> str:
@@ -249,6 +265,11 @@ def probe_endpoint(config: ModelConfig, timeout: float = 10.0) -> list[str]:
         raise ModelInstallError(f"endpoint probe failed: {exc}") from exc
     models = [item.get("id") for item in payload.get("data", []) if isinstance(item, dict)]
     return [model for model in models if isinstance(model, str)]
+
+
+def model_is_advertised(model: str, available: list[str]) -> bool:
+    accepted = {model, *ADVERTISED_MODEL_ALIASES.get(model, set())}
+    return bool(accepted.intersection(available))
 
 
 def default_config_path() -> Path:
@@ -541,16 +562,29 @@ def restore_stock_binary(grok_home: Path) -> Path:
     return manifest_path
 
 
-def install_model_config(path: Path, config: ModelConfig) -> Path | None:
+def install_model_configs(
+    path: Path,
+    configs: tuple[ModelConfig, ...],
+    *,
+    default_alias: str | None,
+) -> Path | None:
+    if not configs:
+        raise ModelInstallError("at least one model configuration is required")
+    aliases = [config.alias for config in configs]
+    if len(set(aliases)) != len(aliases):
+        raise ModelInstallError("model aliases must be unique")
+
     path.parent.mkdir(parents=True, exist_ok=True)
     existing = path.read_text() if path.exists() else ""
     if BEGIN_MARKER not in existing:
-        for alias in (config.alias, *LEGACY_ALIASES):
+        for alias in (*aliases, *LEGACY_ALIASES):
             existing = remove_reserialized_managed_model(existing, alias)
 
-    updated = replace_managed_block(existing, render_model_block(config))
-    if config.make_default:
-        updated = set_default_model(updated, config.alias)
+    updated = replace_managed_block(existing, render_model_blocks(configs))
+    if default_alias is not None:
+        if default_alias not in aliases:
+            raise ModelInstallError("default model alias must be managed by this install")
+        updated = set_default_model(updated, default_alias)
     try:
         tomllib.loads(updated)
     except tomllib.TOMLDecodeError as exc:
@@ -572,6 +606,14 @@ def install_model_config(path: Path, config: ModelConfig) -> Path | None:
     finally:
         temporary_path.unlink(missing_ok=True)
     return backup
+
+
+def install_model_config(path: Path, config: ModelConfig) -> Path | None:
+    return install_model_configs(
+        path,
+        (config,),
+        default_alias=config.alias if config.make_default else None,
+    )
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -641,7 +683,7 @@ def main() -> None:
         )
 
     try:
-        config = ModelConfig(
+        primary_config = ModelConfig(
             base_url=normalize_base_url(args.base_url),
             model=args.model,
             alias=args.alias,
@@ -651,24 +693,39 @@ def main() -> None:
             api_key_env=args.api_key_env,
             make_default=not args.no_default,
         )
-        validate_auth(config)
-        if not args.skip_probe:
-            available = probe_endpoint(config)
-            if available and config.model not in available:
-                raise ModelInstallError(
-                    f"model {config.model!r} is not advertised by the endpoint: {available}"
-                )
-        backup = install_model_config(args.config, config)
+        standard_config = ModelConfig(
+            base_url=STANDARD_BASE_URL,
+            model=STANDARD_MODEL,
+            alias=STANDARD_ALIAS,
+            name=STANDARD_NAME,
+            description=STANDARD_MANAGED_DESCRIPTION,
+            make_default=False,
+        )
+        configs = (primary_config, standard_config)
+        for config in configs:
+            validate_auth(config)
+            if not args.skip_probe:
+                available = probe_endpoint(config)
+                if available and not model_is_advertised(config.model, available):
+                    raise ModelInstallError(
+                        f"model {config.model!r} is not advertised by the endpoint: {available}"
+                    )
+        backup = install_model_configs(
+            args.config,
+            configs,
+            default_alias=primary_config.alias if primary_config.make_default else None,
+        )
         binary_result = (
             install_branded_binary(grok_home, grok_binary, asset) if asset is not None else None
         )
     except (BinaryInstallError, ModelInstallError) as exc:
         parser.error(str(exc))
 
-    print(f"Added {config.name} as {config.alias!r} in {args.config}")
+    for config in configs:
+        print(f"Added {config.name} as {config.alias!r} in {args.config}")
     if backup:
         print(f"Backup: {backup}")
-    if config.make_default:
+    if primary_config.make_default:
         print("Set as the default for new Grok Build sessions.")
     if binary_result:
         print(f"Installed the purple Grok Build UI patch: {binary_result.binary}")
@@ -678,7 +735,7 @@ def main() -> None:
             "| sh -s -- --restore-stock"
         )
     print("Open Grok Build normally: grok")
-    print(f"Switch anytime: /model {config.alias}")
+    print(f"Switch anytime: /model {primary_config.alias} or /model {standard_config.alias}")
 
 
 def launch_fast_model() -> None:

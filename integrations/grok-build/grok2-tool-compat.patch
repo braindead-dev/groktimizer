@@ -1,0 +1,731 @@
+diff --git a/crates/codegen/xai-grok-sampler/src/client.rs b/crates/codegen/xai-grok-sampler/src/client.rs
+index a25a0ce..341a727 100644
+--- a/crates/codegen/xai-grok-sampler/src/client.rs
++++ b/crates/codegen/xai-grok-sampler/src/client.rs
+@@ -22,0 +23 @@ use serde::Serialize;
++use std::sync::atomic::{AtomicUsize, Ordering};
+@@ -29 +30 @@ use xai_grok_sampling_types::{
+-    is_check_event, messages, rs,
++    is_check_event, is_grok2_tool_compat_model, messages, rs,
+@@ -45,0 +47,65 @@ const ANTHROPIC_DEFAULT_MAX_TOKENS: u32 = 128_000;
++const GROKTIMIZED_TOOL_PLANNER_BASE_URL: &str = "https://api.x.ai/v1";
++const GROKTIMIZED_TOOL_PLANNER_MODEL: &str = "grok-4.5";
++static NEXT_TOOL_PLANNER_KEY: AtomicUsize = AtomicUsize::new(0);
++
++fn parse_dotenv_value(contents: &str, name: &str) -> Option<String> {
++    contents.lines().find_map(|line| {
++        let line = line.trim();
++        if line.is_empty() || line.starts_with('#') {
++            return None;
++        }
++        let line = line.strip_prefix("export ").unwrap_or(line);
++        let (key, raw_value) = line.split_once('=')?;
++        if key.trim() != name {
++            return None;
++        }
++
++        let raw_value = raw_value.trim();
++        let value = if raw_value.len() >= 2
++            && ((raw_value.starts_with('\'') && raw_value.ends_with('\''))
++                || (raw_value.starts_with('"') && raw_value.ends_with('"')))
++        {
++            &raw_value[1..raw_value.len() - 1]
++        } else {
++            raw_value
++        };
++        (!value.is_empty()).then(|| value.to_owned())
++    })
++}
++
++fn tool_planner_key(name: &str) -> Option<String> {
++    std::env::var(name)
++        .ok()
++        .filter(|value| !value.trim().is_empty())
++        .or_else(|| {
++            // Grok Build is commonly launched from a project terminal. Honor
++            // that project's conventional `.env` without exporting, logging,
++            // or persisting any of its contents.
++            let contents =
++                std::fs::read_to_string(std::env::current_dir().ok()?.join(".env")).ok()?;
++            parse_dotenv_value(&contents, name)
++        })
++}
++
++/// Pick an xAI key without ever persisting it in Grok Build's model config.
++///
++/// The two names deliberately match Groktimizer's documented environment
++/// contract. Rotating at request boundaries spreads both initial prompts and
++/// follow-up tool-result turns across the available quota pools.
++fn next_tool_planner_api_key() -> Option<String> {
++    let mut keys = ["XAI_API_KEY", "XAI_API_KEY_2"]
++        .into_iter()
++        .filter_map(tool_planner_key)
++        .map(|key| key.trim().to_owned())
++        .filter(|key| !key.is_empty())
++        .collect::<Vec<_>>();
++    keys.dedup();
++
++    if keys.is_empty() {
++        return None;
++    }
++
++    let index = NEXT_TOOL_PLANNER_KEY.fetch_add(1, Ordering::Relaxed) % keys.len();
++    Some(keys.swap_remove(index))
++}
++
+@@ -1847,0 +1914,56 @@ impl SamplingClient {
++    /// Build the official xAI client used only to plan tool calls for the
++    /// llama.cpp-hosted Grok 2 variants. Those deployments do not implement
++    /// native tool calling reliably; the planner returns ordinary native tool
++    /// calls, which the existing Grok Build execution loop handles unchanged.
++    fn grok2_tool_planner(&self, request: &ConversationRequest) -> Result<Option<Self>> {
++        let is_grok2_with_tools = request
++            .model
++            .as_deref()
++            .is_some_and(is_grok2_tool_compat_model)
++            && !request.tools.is_empty();
++
++        if !is_grok2_with_tools || std::env::var_os("GROKTIMIZED_DISABLE_TOOL_PLANNER").is_some() {
++            return Ok(None);
++        }
++
++        let Some(api_key) = next_tool_planner_api_key() else {
++            tracing::warn!(
++                "Groktimized tool planning requires XAI_API_KEY or XAI_API_KEY_2; falling back to the Grok 2 text protocol"
++            );
++            return Ok(None);
++        };
++
++        let base_url = std::env::var("GROKTIMIZED_TOOL_PLANNER_BASE_URL")
++            .ok()
++            .filter(|value| !value.trim().is_empty())
++            .unwrap_or_else(|| GROKTIMIZED_TOOL_PLANNER_BASE_URL.to_owned());
++        let model = std::env::var("GROKTIMIZED_TOOL_PLANNER_MODEL")
++            .ok()
++            .filter(|value| !value.trim().is_empty())
++            .unwrap_or_else(|| GROKTIMIZED_TOOL_PLANNER_MODEL.to_owned());
++
++        tracing::info!(
++            target: crate::sampling_log::TARGET,
++            event = "groktimized_tool_planner",
++            %model,
++            "Routing a Grok 2 tool turn through the native tool planner"
++        );
++
++        Self::new(SamplerConfig {
++            api_key: Some(api_key),
++            base_url,
++            model,
++            max_completion_tokens: self.defaults.max_completion_tokens.or(Some(8_192)),
++            temperature: self.defaults.temperature.or(Some(0.2)),
++            top_p: self.defaults.top_p.or(Some(0.95)),
++            api_backend: ApiBackend::ChatCompletions,
++            auth_scheme: AuthScheme::Bearer,
++            context_window: 131_072,
++            max_retries: Some(2),
++            stream_tool_calls: true,
++            supports_backend_search: false,
++            ..Default::default()
++        })
++        .map(Some)
++    }
++
+@@ -1860,0 +1983,13 @@ impl SamplingClient {
++        if let Some(planner) = self.grok2_tool_planner(&request)? {
++            request.model = Some(planner.defaults.model.clone());
++            planner.apply_conversation_defaults(&mut request)?;
++
++            let trace = request.trace.take();
++            let mut chat_request: ChatCompletionRequest = request.into();
++            if let Some(trace) = trace {
++                chat_request.trace = Some(trace);
++            }
++
++            return planner.chat_completion_stream(chat_request).await;
++        }
++
+@@ -1878,0 +2014,13 @@ impl SamplingClient {
++        if let Some(planner) = self.grok2_tool_planner(&request)? {
++            request.model = Some(planner.defaults.model.clone());
++            planner.apply_conversation_defaults(&mut request)?;
++
++            let trace = request.trace.take();
++            let mut chat_request: ChatCompletionRequest = request.into();
++            if let Some(trace) = trace {
++                chat_request.trace = Some(trace);
++            }
++
++            return planner.chat_completion(chat_request).await;
++        }
++
+@@ -2081,0 +2230,20 @@ mod tests {
++
++    #[test]
++    fn parses_tool_planner_keys_from_standard_dotenv_forms() {
++        let contents = r#"
++# comment
++XAI_API_KEY=first
++export XAI_API_KEY_2='second'
++IGNORED=value
++"#;
++
++        assert_eq!(
++            parse_dotenv_value(contents, "XAI_API_KEY").as_deref(),
++            Some("first")
++        );
++        assert_eq!(
++            parse_dotenv_value(contents, "XAI_API_KEY_2").as_deref(),
++            Some("second")
++        );
++        assert_eq!(parse_dotenv_value(contents, "MISSING"), None);
++    }
+diff --git a/crates/codegen/xai-grok-sampler/src/stream/chat_completions.rs b/crates/codegen/xai-grok-sampler/src/stream/chat_completions.rs
+index 7ee1b9b..db785aa 100644
+--- a/crates/codegen/xai-grok-sampler/src/stream/chat_completions.rs
++++ b/crates/codegen/xai-grok-sampler/src/stream/chat_completions.rs
+@@ -14,0 +15 @@ use xai_grok_sampling_types::{
++    is_grok2_tool_compat_model,
+@@ -20,0 +22,101 @@ use crate::types::RequestId;
++const GROK2_TOOL_CALL_OPEN: &str = "<tool_call>";
++const GROK2_TOOL_CALL_CLOSE: &str = "</tool_call>";
++
++fn tool_call_from_value(value: &serde_json::Value) -> Option<(String, String)> {
++    let value = value.get("function").unwrap_or(value);
++    let name = value.get("name")?.as_str()?.trim();
++    if name.is_empty() {
++        return None;
++    }
++    let arguments = match value.get("arguments") {
++        Some(serde_json::Value::String(encoded)) => {
++            if serde_json::from_str::<serde_json::Value>(encoded).is_ok() {
++                encoded.clone()
++            } else {
++                serde_json::Value::String(encoded.clone()).to_string()
++            }
++        }
++        Some(arguments) => arguments.to_string(),
++        None => "{}".to_string(),
++    };
++    Some((name.to_string(), arguments))
++}
++
++fn tool_calls_from_value(value: &serde_json::Value) -> Vec<(String, String)> {
++    if let Some(calls) = value
++        .get("tool_calls")
++        .and_then(serde_json::Value::as_array)
++    {
++        return calls.iter().filter_map(tool_call_from_value).collect();
++    }
++    tool_call_from_value(value).into_iter().collect()
++}
++
++/// Parse the text envelope taught to Grok-2 into native tool calls. Accept a
++/// whole-response JSON object too: older checkpoints occasionally omit the
++/// XML-like wrapper even when they preserve the exact JSON shape.
++fn parse_grok2_tool_calls(
++    content: &str,
++    request_id: &RequestId,
++) -> Option<(String, Vec<ToolCall>)> {
++    let mut outside = String::new();
++    let mut parsed = Vec::<(String, String)>::new();
++    let mut cursor = 0usize;
++    let mut found_envelope = false;
++
++    while let Some(relative_start) = content[cursor..].find(GROK2_TOOL_CALL_OPEN) {
++        found_envelope = true;
++        let start = cursor + relative_start;
++        outside.push_str(&content[cursor..start]);
++        let payload_start = start + GROK2_TOOL_CALL_OPEN.len();
++        let Some(relative_end) = content[payload_start..].find(GROK2_TOOL_CALL_CLOSE) else {
++            return None;
++        };
++        let end = payload_start + relative_end;
++        let payload = content[payload_start..end]
++            .trim()
++            .trim_start_matches("```json")
++            .trim_start_matches("```")
++            .trim_end_matches("```")
++            .trim();
++        let value = serde_json::from_str::<serde_json::Value>(payload).ok()?;
++        let calls = tool_calls_from_value(&value);
++        if calls.is_empty() {
++            return None;
++        }
++        parsed.extend(calls);
++        cursor = end + GROK2_TOOL_CALL_CLOSE.len();
++    }
++
++    if found_envelope {
++        outside.push_str(&content[cursor..]);
++    } else {
++        let payload = content
++            .trim()
++            .trim_start_matches("```json")
++            .trim_start_matches("```")
++            .trim_end_matches("```")
++            .trim();
++        let value = serde_json::from_str::<serde_json::Value>(payload).ok()?;
++        parsed = tool_calls_from_value(&value);
++        if parsed.is_empty() {
++            return None;
++        }
++    }
++
++    let calls = parsed
++        .into_iter()
++        .enumerate()
++        .map(|(index, (name, arguments))| ToolCall {
++            id: std::sync::Arc::<str>::from(format!(
++                "call_grok2_{}_{}",
++                request_id.as_str(),
++                index
++            )),
++            name,
++            arguments: std::sync::Arc::<str>::from(arguments),
++        })
++        .collect();
++    Some((outside.trim().to_string(), calls))
++}
++
+@@ -70,0 +173,4 @@ pub fn stream_chat_completions<'a>(
++        // `None` means the first non-whitespace bytes might still be the
++        // `<tool_call>` prefix. `Some(true)` buffers a tool envelope so it is
++        // not flashed as assistant prose; `Some(false)` streams normal text.
++        let mut grok2_tool_envelope: Option<bool> = None;
+@@ -158,6 +263,0 @@ pub fn stream_chat_completions<'a>(
+-                    if !first_token_emitted {
+-                        first_token_emitted = true;
+-                        yield SamplingEvent::FirstToken {
+-                            request_id: request_id.clone(),
+-                        };
+-                    }
+@@ -165,3 +264,0 @@ pub fn stream_chat_completions<'a>(
+-                    chunk_timestamps.push(Instant::now());
+-                    chunk_index += 1;
+-                    message_chunk_count += 1;
+@@ -169,5 +266,19 @@ pub fn stream_chat_completions<'a>(
+-                    yield SamplingEvent::ChannelToken {
+-                        request_id: request_id.clone(),
+-                        channel: SamplingChannel::Text,
+-                        text,
+-                        chunk_index,
++                    let text_to_emit = if is_grok2_tool_compat_model(&model) {
++                        match grok2_tool_envelope {
++                            Some(true) => None,
++                            Some(false) => Some(text),
++                            None => {
++                                let candidate = content_acc.trim_start();
++                                if candidate.starts_with(GROK2_TOOL_CALL_OPEN) {
++                                    grok2_tool_envelope = Some(true);
++                                    None
++                                } else if GROK2_TOOL_CALL_OPEN.starts_with(candidate) {
++                                    None
++                                } else {
++                                    grok2_tool_envelope = Some(false);
++                                    Some(content_acc.clone())
++                                }
++                            }
++                        }
++                    } else {
++                        Some(text)
+@@ -174,0 +286,17 @@ pub fn stream_chat_completions<'a>(
++                    if let Some(text) = text_to_emit {
++                        if !first_token_emitted {
++                            first_token_emitted = true;
++                            yield SamplingEvent::FirstToken {
++                                request_id: request_id.clone(),
++                            };
++                        }
++                        chunk_timestamps.push(Instant::now());
++                        chunk_index += 1;
++                        message_chunk_count += 1;
++                        yield SamplingEvent::ChannelToken {
++                            request_id: request_id.clone(),
++                            channel: SamplingChannel::Text,
++                            text,
++                            chunk_index,
++                        };
++                    }
+@@ -248 +376 @@ pub fn stream_chat_completions<'a>(
+-        let tool_calls: Vec<ToolCall> = tool_call_acc
++        let mut tool_calls: Vec<ToolCall> = tool_call_acc
+@@ -256,0 +385,37 @@ pub fn stream_chat_completions<'a>(
++        if tool_calls.is_empty()
++            && is_grok2_tool_compat_model(&model)
++            && let Some((remaining_content, parsed_calls)) =
++                parse_grok2_tool_calls(&content_acc, &request_id)
++        {
++            content_acc = remaining_content;
++            for (index, call) in parsed_calls.iter().enumerate() {
++                yield SamplingEvent::ToolCallDelta {
++                    request_id: request_id.clone(),
++                    tool_index: index as u32,
++                    id: Some(call.id.to_string()),
++                    name: Some(call.name.clone()),
++                    arguments_delta: Some(call.arguments.to_string()),
++                };
++            }
++            tool_calls = parsed_calls;
++        } else if is_grok2_tool_compat_model(&model)
++            && grok2_tool_envelope != Some(false)
++            && !content_acc.is_empty()
++        {
++            // The prefix looked like a tool envelope but parsing failed. Never
++            // swallow model output: surface it as ordinary assistant text.
++            if !first_token_emitted {
++                yield SamplingEvent::FirstToken {
++                    request_id: request_id.clone(),
++                };
++            }
++            chunk_index += 1;
++            message_chunk_count += 1;
++            yield SamplingEvent::ChannelToken {
++                request_id: request_id.clone(),
++                channel: SamplingChannel::Text,
++                text: content_acc.clone(),
++                chunk_index,
++            };
++        }
++
+@@ -776,0 +942,47 @@ mod tests {
++
++    #[tokio::test]
++    async fn grok2_text_envelope_becomes_a_native_tool_call() {
++        let mut first = text_chunk(" <tool_");
++        first.model = "grok-2-fast".to_string();
++        let mut second = text_chunk(
++            r#"call>{"name":"run_terminal_cmd","arguments":{"command":"touch /tmp/ok"}}</tool_call>"#,
++        );
++        second.model = "grok-2-fast".to_string();
++        let mut final_stop = final_chunk(FinishReason::Stop);
++        final_stop.model = "grok-2-fast".to_string();
++        let raw = stream::iter(vec![Ok(first), Ok(second), Ok(final_stop)]).boxed();
++
++        let events = collect(stream_chat_completions(
++            raw,
++            None,
++            rid(),
++            Duration::from_secs(60),
++        ))
++        .await;
++
++        assert!(events.iter().any(|event| matches!(
++            event,
++            SamplingEvent::ToolCallDelta { name: Some(name), .. } if name == "run_terminal_cmd"
++        )));
++        assert!(!events.iter().any(|event| matches!(
++            event,
++            SamplingEvent::ChannelToken {
++                channel: SamplingChannel::Text,
++                ..
++            }
++        )));
++        match events.last().unwrap() {
++            SamplingEvent::Completed { response, .. } => {
++                assert_eq!(response.stop_reason, Some(StopReason::ToolCalls));
++                let assistant = response.assistant().expect("assistant response");
++                assert!(assistant.content.is_empty());
++                assert_eq!(assistant.tool_calls.len(), 1);
++                assert_eq!(assistant.tool_calls[0].name, "run_terminal_cmd");
++                assert_eq!(
++                    assistant.tool_calls[0].arguments.as_ref(),
++                    r#"{"command":"touch /tmp/ok"}"#
++                );
++            }
++            other => panic!("expected Completed, got {other:?}"),
++        }
++    }
+diff --git a/crates/codegen/xai-grok-sampling-types/src/conversation.rs b/crates/codegen/xai-grok-sampling-types/src/conversation.rs
+index 9fd4f80..6375012 100644
+--- a/crates/codegen/xai-grok-sampling-types/src/conversation.rs
++++ b/crates/codegen/xai-grok-sampling-types/src/conversation.rs
+@@ -11 +11,3 @@ mod responses;
+-pub use chat_completions::{conversation_item_to_chat_message, conversation_to_chat_messages};
++pub use chat_completions::{
++    conversation_item_to_chat_message, conversation_to_chat_messages, is_grok2_tool_compat_model,
++};
+diff --git a/crates/codegen/xai-grok-sampling-types/src/conversation/chat_completions.rs b/crates/codegen/xai-grok-sampling-types/src/conversation/chat_completions.rs
+index dac77d8..bdefad7 100644
+--- a/crates/codegen/xai-grok-sampling-types/src/conversation/chat_completions.rs
++++ b/crates/codegen/xai-grok-sampling-types/src/conversation/chat_completions.rs
+@@ -4,0 +5,193 @@ use super::*;
++const GROK2_TOOL_CALL_OPEN: &str = "<tool_call>";
++const GROK2_TOOL_CALL_CLOSE: &str = "</tool_call>";
++
++/// Grok-2's published llama.cpp chat template is text-only: it ignores native
++/// `tools`, assistant `tool_calls`, and `tool` result messages. Keep the
++/// compatibility path narrowly scoped to the two upstream model IDs used by
++/// the Groktimizer endpoints.
++pub fn is_grok2_tool_compat_model(model: &str) -> bool {
++    matches!(
++        model.trim().to_ascii_lowercase().as_str(),
++        "grok-2" | "grok-2-fast"
++    )
++}
++
++fn grok2_tool_protocol(tools: &[ToolSpec], tool_choice: Option<&ConversationToolChoice>) -> String {
++    fn compact_schema(schema: &serde_json::Value) -> serde_json::Value {
++        let Some(object) = schema.as_object() else {
++            return schema.clone();
++        };
++        let mut compact = serde_json::Map::new();
++        for key in [
++            "type",
++            "required",
++            "enum",
++            "default",
++            "additionalProperties",
++        ] {
++            if let Some(value) = object.get(key) {
++                compact.insert(key.to_string(), value.clone());
++            }
++        }
++        if let Some(items) = object.get("items") {
++            compact.insert("items".to_string(), compact_schema(items));
++        }
++        if let Some(properties) = object
++            .get("properties")
++            .and_then(serde_json::Value::as_object)
++        {
++            compact.insert(
++                "properties".to_string(),
++                serde_json::Value::Object(
++                    properties
++                        .iter()
++                        .map(|(name, value)| (name.clone(), compact_schema(value)))
++                        .collect(),
++                ),
++            );
++        }
++        serde_json::Value::Object(compact)
++    }
++
++    let compact_tools = tools
++        .iter()
++        .map(|tool| {
++            let description = tool
++                .description
++                .as_deref()
++                .unwrap_or_default()
++                .lines()
++                .next()
++                .unwrap_or_default()
++                .chars()
++                .take(160)
++                .collect::<String>();
++            serde_json::json!({
++                "name": tool.name,
++                "description": description,
++                "parameters": compact_schema(&tool.parameters),
++            })
++        })
++        .collect::<Vec<_>>();
++    let tools_json = serde_json::to_string(&compact_tools).unwrap_or_else(|_| "[]".to_string());
++    let choice = match tool_choice {
++        Some(ConversationToolChoice::Required) => "You MUST call a tool on this turn.",
++        Some(ConversationToolChoice::Function(name)) => {
++            return format!(
++                r#"<grok_build_tool_protocol>
++You are an autonomous coding agent inside Grok Build. The user expects you to perform work, not merely explain it. You MUST call the tool named {name:?} on this turn.
++
++To call a tool, output exactly one envelope with valid compact JSON and no Markdown or prose:
++{GROK2_TOOL_CALL_OPEN}{{"name":{name:?},"arguments":{{...}}}}{GROK2_TOOL_CALL_CLOSE}
++
++Use the exact argument names and types from AVAILABLE_TOOLS_JSON. Tool results arrive in <tool_result> envelopes. After each result, call another tool if work remains; only give a normal final answer after tool output proves the task is complete.
++AVAILABLE_TOOLS_JSON={tools_json}
++</grok_build_tool_protocol>"#
++            );
++        }
++        Some(ConversationToolChoice::None) => "Do not call a tool on this turn.",
++        _ => {
++            "Call a tool whenever the request requires inspecting, creating, editing, or executing anything."
++        }
++    };
++    format!(
++        r#"<grok_build_tool_protocol>
++You are an autonomous coding agent inside Grok Build. The user expects you to perform work, not merely explain how they could do it. {choice}
++
++To call a tool, output exactly one envelope with valid compact JSON and no Markdown or prose:
++{GROK2_TOOL_CALL_OPEN}{{"name":"TOOL_NAME","arguments":{{...}}}}{GROK2_TOOL_CALL_CLOSE}
++
++Your response is machine-parsed. For every request that requires an action, your very first output must be `<tool_call>`; an explanation instead of a tool call fails the task. Use only a tool name from AVAILABLE_TOOLS_JSON and use its exact argument names and types. Make one tool call at a time.
++
++Example for a request that needs a shell command:
++{GROK2_TOOL_CALL_OPEN}{{"name":"run_terminal_command","arguments":{{"command":"pwd","description":"Inspect the current working directory"}}}}{GROK2_TOOL_CALL_CLOSE}
++
++Tool results arrive in <tool_result> envelopes. After each result, call another tool if work remains; only give a normal final answer after tool output proves the task is complete. Never print code that the user asked you to save to disk: use a file or terminal tool to save it.
++AVAILABLE_TOOLS_JSON={tools_json}
++</grok_build_tool_protocol>"#
++    )
++}
++
++fn apply_grok2_tool_compat(
++    messages: &mut Vec<ChatRequestMessage>,
++    tools: &[ToolSpec],
++    tool_choice: Option<&ConversationToolChoice>,
++) {
++    if tools.is_empty() {
++        return;
++    }
++
++    let protocol = grok2_tool_protocol(tools, tool_choice);
++    if let Some(system) = messages
++        .iter_mut()
++        .find(|message| message.role == Role::System)
++    {
++        // Grok-2 has a much smaller effective instruction budget than the
++        // native Grok Build models. Its stock agent prompt is both too large
++        // and assumes native tool calls, so use the concise compatibility
++        // protocol as the complete system message for this narrow path.
++        system.set_text_content(protocol);
++    } else {
++        messages.insert(0, ChatRequestMessage::system(protocol));
++    }
++
++    // Grok Build injects large skills and MCP catalogs as synthetic user
++    // reminders. The native models can use that context, but it pushes the
++    // text-only Grok-2 deployments beyond their effective context window and
++    // crowds out the tool protocol. Dynamic MCP discovery remains available
++    // through `search_tool` / `use_tool` in the compact tool catalog.
++    messages.retain(|message| {
++        message.role != Role::User
++            || !message
++                .text_content()
++                .trim_start()
++                .starts_with("<system-reminder>")
++    });
++
++    let mut call_names = std::collections::HashMap::<String, String>::new();
++    for message in messages.iter_mut() {
++        match message.role {
++            Role::Assistant if !message.tool_calls.is_empty() => {
++                let mut rendered = message.text_content();
++                for call in &message.tool_calls {
++                    if let Some(id) = &call.id {
++                        call_names.insert(id.clone(), call.function.name.clone());
++                    }
++                    let arguments =
++                        serde_json::from_str::<serde_json::Value>(&call.function.arguments)
++                            .unwrap_or_else(|_| {
++                                serde_json::Value::String(call.function.arguments.clone())
++                            });
++                    let envelope = serde_json::json!({
++                        "name": call.function.name,
++                        "arguments": arguments,
++                    });
++                    if !rendered.is_empty() {
++                        rendered.push('\n');
++                    }
++                    rendered.push_str(GROK2_TOOL_CALL_OPEN);
++                    rendered.push_str(&envelope.to_string());
++                    rendered.push_str(GROK2_TOOL_CALL_CLOSE);
++                }
++                message.set_text_content(rendered);
++                message.tool_calls.clear();
++            }
++            Role::Tool => {
++                let call_id = message.tool_call_id.clone().unwrap_or_default();
++                let name = call_names.get(&call_id).cloned().unwrap_or_default();
++                let envelope = serde_json::json!({
++                    "tool_call_id": call_id,
++                    "name": name,
++                    "output": message.text_content(),
++                });
++                message.role = Role::User;
++                message.tool_call_id = None;
++                message.set_text_content(format!(
++                    "<tool_result>{envelope}</tool_result>\nContinue the task. Call another tool if needed; otherwise give the final answer."
++                ));
++            }
++            _ => {}
++        }
++    }
++}
++
+@@ -254 +447,5 @@ impl From<ConversationRequest> for ChatCompletionRequest {
+-        let messages: Vec<ChatRequestMessage> = conversation_to_chat_messages(req.items);
++        let grok2_tool_compat = req.model.as_deref().is_some_and(is_grok2_tool_compat_model);
++        let mut messages: Vec<ChatRequestMessage> = conversation_to_chat_messages(req.items);
++        if grok2_tool_compat {
++            apply_grok2_tool_compat(&mut messages, &req.tools, req.tool_choice.as_ref());
++        }
+@@ -257 +454 @@ impl From<ConversationRequest> for ChatCompletionRequest {
+-        let tools: Option<Vec<ToolDefinition>> = if tools_is_empty {
++        let tools: Option<Vec<ToolDefinition>> = if tools_is_empty || grok2_tool_compat {
+@@ -269,2 +466,3 @@ impl From<ConversationRequest> for ChatCompletionRequest {
+-        let tool_choice = req
+-            .tool_choice
++        let tool_choice = (!grok2_tool_compat)
++            .then_some(req.tool_choice)
++            .flatten()
+@@ -314,0 +513,70 @@ impl From<ConversationRequest> for ChatCompletionRequest {
++
++#[cfg(test)]
++mod grok2_compat_tests {
++    use super::*;
++
++    fn terminal_tool() -> ToolSpec {
++        ToolSpec {
++            name: "run_terminal_cmd".to_string(),
++            description: Some("Run a shell command".to_string()),
++            parameters: serde_json::json!({
++                "type": "object",
++                "properties": {"command": {"type": "string"}},
++                "required": ["command"]
++            }),
++        }
++    }
++
++    #[test]
++    fn grok2_moves_tools_into_the_system_prompt() {
++        let request = ConversationRequest {
++            items: vec![
++                ConversationItem::system("You are a coding agent."),
++                ConversationItem::user("Create a file."),
++            ],
++            tools: vec![terminal_tool()],
++            tool_choice: Some(ConversationToolChoice::Auto),
++            model: Some("grok-2-fast".to_string()),
++            ..Default::default()
++        };
++
++        let wire: ChatCompletionRequest = request.into();
++
++        assert!(wire.tools.is_none());
++        assert!(wire.tool_choice.is_none());
++        let system = wire.messages[0].text_content();
++        assert!(system.contains("<grok_build_tool_protocol>"));
++        assert!(system.contains("run_terminal_cmd"));
++        assert!(system.contains("<tool_call>"));
++    }
++
++    #[test]
++    fn grok2_preserves_tool_history_as_text_messages() {
++        let request = ConversationRequest {
++            items: vec![
++                ConversationItem::system("system"),
++                ConversationItem::assistant_tool_calls(vec![ToolCall {
++                    id: Arc::<str>::from("call-1"),
++                    name: "run_terminal_cmd".to_string(),
++                    arguments: Arc::<str>::from(r#"{"command":"pwd"}"#),
++                }]),
++                ConversationItem::ToolResult(ToolResultItem {
++                    tool_call_id: "call-1".to_string(),
++                    content: Arc::<str>::from("/tmp"),
++                    images: Vec::new(),
++                }),
++            ],
++            tools: vec![terminal_tool()],
++            model: Some("grok-2".to_string()),
++            ..Default::default()
++        };
++
++        let wire: ChatCompletionRequest = request.into();
++
++        assert_eq!(wire.messages[1].role, Role::Assistant);
++        assert!(wire.messages[1].text_content().contains("<tool_call>"));
++        assert_eq!(wire.messages[2].role, Role::User);
++        assert!(wire.messages[2].text_content().contains("<tool_result>"));
++        assert!(wire.messages[2].text_content().contains("/tmp"));
++    }
++}

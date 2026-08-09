@@ -5,10 +5,12 @@ SOURCE_REPO="${GROK_BUILD_SOURCE_REPO:-https://github.com/xai-org/grok-build.git
 SOURCE_REV="8a14c91d88875a831a38b3a066b1683116bcb31c"
 PROJECT_ROOT="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
 PATCH_FILE="$PROJECT_ROOT/integrations/grok-build/groktimized-ui.patch"
+TOOL_PATCH_FILE="$PROJECT_ROOT/integrations/grok-build/grok2-tool-compat.patch"
 NOTICE_FILE="$PROJECT_ROOT/integrations/grok-build/GROKTIMIZER-NOTICE.txt"
 OUTPUT_DIR="${GROKTIMIZED_BUILD_OUTPUT:-$PROJECT_ROOT/dist/grok-build-ui}"
 PLATFORM="$(uname -s)"
 ARCH="$(uname -m)"
+BUILD_JOBS="${GROKTIMIZED_BUILD_JOBS:-1}"
 
 if [ "$PLATFORM" != "Darwin" ] || [ "$ARCH" != "arm64" ]; then
   printf '%s\n' 'This release recipe currently targets macOS on Apple Silicon.' >&2
@@ -29,11 +31,15 @@ git clone --filter=blob:none "$SOURCE_REPO" "$worktree/source"
 git -C "$worktree/source" checkout --detach "$SOURCE_REV"
 git -C "$worktree/source" apply --unidiff-zero --check "$PATCH_FILE"
 git -C "$worktree/source" apply --unidiff-zero "$PATCH_FILE"
+git -C "$worktree/source" apply --unidiff-zero --check "$TOOL_PATCH_FILE"
+git -C "$worktree/source" apply --unidiff-zero "$TOOL_PATCH_FILE"
 
 (
   cd "$worktree/source"
-  cargo test -p xai-grok-pager groktimized
-  cargo build -p xai-grok-pager-bin --release
+  CARGO_INCREMENTAL=0 cargo test -p xai-grok-pager groktimized --release -j "$BUILD_JOBS"
+  CARGO_INCREMENTAL=0 cargo test -p xai-grok-sampling-types -p xai-grok-sampler grok2 \
+    --no-default-features --release -j "$BUILD_JOBS"
+  CARGO_INCREMENTAL=0 cargo build -p xai-grok-pager-bin --release -j "$BUILD_JOBS"
 )
 
 bundle="$worktree/bundle"

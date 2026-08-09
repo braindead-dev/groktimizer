@@ -1,4 +1,4 @@
-Groktimized Grok Build UI patch 1.0.0
+Groktimized Grok Build patch 1.1.0
 
 This distribution is a modified build of xAI's Grok Build 1.0.0, based on
 https://github.com/xai-org/grok-build at commit
@@ -11,7 +11,20 @@ Modifications by the Groktimizer project:
   card.
 - Place `Groktimized 2` first in the model selector while preserving the order
   of all other catalog entries.
+- Register the accelerated deployment as `Groktimized 2` and the standard
+  deployment as `Grok 2`; the latter has no misleading "Normal" suffix.
+- Teach the text-only `grok-2` and `grok-2-fast` llama.cpp deployments the
+  available tool schemas and translate their streamed `<tool_call>` envelopes
+  into native Grok Build tool calls. Other models retain stock behavior.
+- When `XAI_API_KEY` or `XAI_API_KEY_2` is available, route tool-bearing turns
+  from those two deployments through `grok-4.5` on the official xAI API. The
+  deployed Grok 2 chat templates do not reliably implement native tool calls;
+  this explicit compatibility layer makes their Grok Build entries usable for
+  coding tasks. Two configured keys are rotated between turns. Keys are read
+  from the process environment or the current project's `.env`, and are never
+  persisted or logged by the patch.
 
-The complete patch is distributed as `groktimized-ui.patch` in the Groktimizer
-source repository. Grok Build is licensed under Apache License 2.0. Its original
-LICENSE and THIRD-PARTY-NOTICES are included with the binary distribution.
+The complete patches are distributed as `groktimized-ui.patch` and
+`grok2-tool-compat.patch` in the Groktimizer source repository. Grok Build is
+licensed under Apache License 2.0. Its original LICENSE and THIRD-PARTY-NOTICES
+are included with the binary distribution.

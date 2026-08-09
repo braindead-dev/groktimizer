@@ -15,7 +15,9 @@ from groktimizer.integrations.grok_build import (
     current_binary_asset,
     install_branded_binary,
     install_model_config,
+    install_model_configs,
     launch_fast_model,
+    model_is_advertised,
     normalize_base_url,
     render_model_block,
     restore_stock_binary,
@@ -47,6 +49,29 @@ def test_install_preserves_config_and_is_idempotent(tmp_path):
     assert parsed["model"]["groktimized-2"]["base_url"] == "http://localhost:9000/v1"
     assert backup is not None and backup.exists()
     assert path.stat().st_mode & 0o777 == 0o600
+
+
+def test_install_manages_fast_and_standard_models_as_one_atomic_block(tmp_path):
+    path = tmp_path / "config.toml"
+    path.write_text('[models]\ndefault = "grok-4.5"\n')
+    fast = ModelConfig(base_url="http://localhost:8000/v1")
+    standard = ModelConfig(
+        base_url="http://localhost:8001/v1",
+        model="grok-2",
+        alias="grok-2-normal",
+        name="Grok 2",
+        description="Grok 2 deployment managed by Groktimizer",
+        make_default=False,
+    )
+
+    install_model_configs(path, (fast, standard), default_alias=fast.alias)
+
+    text = path.read_text()
+    parsed = tomllib.loads(text)
+    assert text.count(BEGIN_MARKER) == 1
+    assert parsed["models"]["default"] == "groktimized-2"
+    assert parsed["model"]["groktimized-2"]["name"] == "Groktimized 2"
+    assert parsed["model"]["grok-2-normal"]["name"] == "Grok 2"
 
 
 def test_install_recovers_after_grok_reserializes_managed_table(tmp_path):
@@ -105,6 +130,12 @@ def test_binary_asset_normalizes_apple_silicon_architecture():
     assert current_binary_asset("Darwin", "arm64") is not None
     assert current_binary_asset("Darwin", "aarch64") is not None
     assert current_binary_asset("Linux", "arm64") is None
+
+
+def test_fast_endpoint_advertised_name_is_a_supported_server_alias():
+    assert model_is_advertised("grok-2-fast", ["grok-2-madmax"])
+    assert model_is_advertised("grok-2", ["grok-2"])
+    assert not model_is_advertised("grok-2", ["unrelated-model"])
 
 
 def test_branded_binary_install_is_atomic_and_restorable(tmp_path):
