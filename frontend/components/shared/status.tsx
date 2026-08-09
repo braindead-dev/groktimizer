@@ -1,6 +1,7 @@
 import type { AgentStatus, ProjectStatus } from "@/lib/types";
 
 const statusLabels: Record<AgentStatus | ProjectStatus, string> = {
+  provisioning: "Provisioning",
   running: "Running",
   thinking: "Thinking",
   queued: "Queued",

@@ -54,6 +54,24 @@ export async function stopAgent(sandbox: string) {
   return payload as { deleted: true };
 }
 
+export async function interruptAgent(sandbox: string) {
+  const response = await fetch(`/api/agents/${encodeURIComponent(sandbox)}/interrupt`, {
+    method: "POST",
+  });
+  const payload = await response.json().catch(() => null) as {
+    interrupted?: boolean;
+    turn_id?: string | null;
+    error?: string;
+  } | null;
+  if (!response.ok) {
+    throw new Error(payload?.error ?? "The active response could not be stopped");
+  }
+  return {
+    interrupted: payload?.interrupted === true,
+    turnId: payload?.turn_id ?? null,
+  };
+}
+
 export async function repairAgent(sandbox: string) {
   const response = await fetch(`/api/agents/${encodeURIComponent(sandbox)}/repair`, {
     method: "POST",
@@ -88,7 +106,7 @@ export async function startResearchProject(objective: string, project: string) {
   }>;
 }
 
-export async function stopResearchProject(project: string) {
+export async function deleteResearchProject(project: string) {
   const response = await fetch(`/api/projects/${encodeURIComponent(project)}`, { method: "DELETE" });
   const payload = await response.json().catch(() => null) as {
     deleted?: boolean;
@@ -97,7 +115,7 @@ export async function stopResearchProject(project: string) {
     error?: string;
   } | null;
   if (!response.ok || !payload?.deleted) {
-    throw new Error(payload?.error ?? "The research run could not be stopped");
+    throw new Error(payload?.error ?? "The project could not be deleted");
   }
   return payload as { deleted: true; project: string; sandboxes: number };
 }

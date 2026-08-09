@@ -164,22 +164,26 @@ function normalizeLiveAgent(source: LiveAgentSnapshot, referenceTime: number): A
       ? humanize(source.team)
       : source.role === "reconciler"
         ? "Final reconciler"
-      : humanize(source.agent);
-  const status: Agent["status"] = !source.running || source.turn_status === "stopped"
-    ? "blocked"
-    : source.turn_status === "running" || source.turn_status === "interrupting"
-      ? "thinking"
-      : source.turn_status === "failed"
-        ? "blocked"
-        : "running";
+        : humanize(source.agent);
+  const status: Agent["status"] = source.provisioning
+    ? "provisioning"
+    : !source.running || source.turn_status === "stopped"
+      ? "blocked"
+      : source.turn_status === "running" || source.turn_status === "interrupting"
+        ? "thinking"
+        : source.turn_status === "failed"
+          ? "blocked"
+          : "running";
   return {
     id: source.sandbox_name,
     name,
     role,
     status,
-    task: source.running
-      ? `${humanize(source.turn_status)}${source.queued ? ` · ${source.queued} queued` : ""} · ${source.branch}`
-      : `Sandbox session is not running · ${source.branch}`,
+    task: source.provisioning
+      ? `Connecting sandbox · ${source.branch}`
+      : source.running
+        ? `${humanize(source.turn_status)}${source.queued ? ` · ${source.queued} queued` : ""} · ${source.branch}`
+        : `Sandbox session is not running · ${source.branch}`,
     progress: 0,
     tokens: "—",
     elapsed: elapsedFromTimestamp(source.log_mtime, referenceTime),

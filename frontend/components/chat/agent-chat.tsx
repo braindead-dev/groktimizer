@@ -10,6 +10,7 @@ import {
   Code2,
   Radio,
   RotateCcw,
+  Square,
   Terminal,
   Zap,
   X,
@@ -20,7 +21,7 @@ import { useStickToBottom } from "use-stick-to-bottom";
 import { ChatSkeleton } from "@/components/shared/skeleton";
 import { StatusPill } from "@/components/shared/status";
 import { useAgentConversation, type PendingTurn } from "@/hooks/use-agent-conversation";
-import { repairAgent } from "@/lib/control-plane-client";
+import { interruptAgent, repairAgent } from "@/lib/control-plane-client";
 import type { ChatEvent, ChatTurn } from "@/lib/control-plane-types";
 import type { Agent, Project } from "@/lib/types";
 import { useResearchDispatch, useResearchState } from "@/store/research-store";
@@ -178,7 +179,7 @@ function TurnBlock({
         <small className={`turn-state turn-state-${turn.status}`}>
           {turn.sender_kind !== "operator" ? <span>{senderName(turn)} · </span> : null}
           {turn.mode === "interrupt" ? <Zap size={10} /> : null}
-          {turnStateLabel(turn)}
+          <span className={turn.status === "queued" ? "chat-state-shimmer" : undefined}>{turnStateLabel(turn)}</span>
           <span> · {formatTime(turn.created_at)}</span>
         </small>
       </div>
@@ -191,7 +192,7 @@ function TurnBlock({
               <details className="chat-reasoning" open={active} key={block.id}>
                 <summary>
                   <Brain size={13} />
-                  <span>{active ? "Thinking…" : "Reasoning"}</span>
+                  <span className={active ? "chat-state-shimmer" : undefined}>{active ? "Thinking…" : "Reasoning"}</span>
                   <ChevronDown size={12} />
                 </summary>
                 <div className="markdown-body">
@@ -209,7 +210,7 @@ function TurnBlock({
 
         {blocks.length === 0 && (active || turn.status === "queued") ? (
           <div className="chat-planning-placeholder">
-            <span>{turn.status === "queued" ? "Waiting to run…" : "Working…"}</span>
+            <span className="chat-state-shimmer">{turn.status === "queued" ? "Waiting to run…" : "Working…"}</span>
           </div>
         ) : null}
 
@@ -238,24 +239,30 @@ function Composer({
   busy,
   queued,
   onSend,
+  onStop,
+  stopping,
+  stopError,
 }: {
   agent: Agent;
   busy: boolean;
   queued: number;
-  onSend: (body: string, mode: "queue" | "interrupt") => void;
+  onSend: (body: string) => void;
+  onStop: () => void;
+  stopping: boolean;
+  stopError: string | null;
 }) {
   const [draft, setDraft] = useState("");
 
-  function submit(mode: "queue" | "interrupt") {
+  function submit() {
     const body = draft.trim();
-    if (!body || !agent.sandboxName) return;
+    if (!body || !agent.sandboxName || busy) return;
     setDraft("");
-    onSend(body, mode);
+    onSend(body);
   }
 
   function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    submit("queue");
+    submit();
   }
 
   function handleKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
@@ -267,10 +274,11 @@ function Composer({
 
   return (
     <div className="chat-composer-shell">
+      {stopError ? <div className="composer-error" role="alert">{stopError}</div> : null}
       {busy || queued ? (
         <div className="composer-run-state">
           <Radio size={11} />
-          {busy ? "Working" : `${queued} ${queued === 1 ? "message" : "messages"} waiting`}
+          <span className="chat-state-shimmer">{busy ? "Working" : `${queued} ${queued === 1 ? "message" : "messages"} waiting`}</span>
           {busy && queued ? <span>{queued} waiting</span> : null}
         </div>
       ) : null}
@@ -285,22 +293,23 @@ function Composer({
           rows={2}
         />
         <div className="chat-composer-toolbar">
-          <span className="composer-hint">Enter to queue · Shift+Enter for a new line</span>
+          <span className="composer-hint">{busy ? "Stop the current response before sending" : "Enter to send · Shift+Enter for a new line"}</span>
           <div>
             {busy ? (
               <button
                 type="button"
-                className="interrupt-button"
-                disabled={!draft.trim()}
-                onClick={() => submit("interrupt")}
+                className="stop-output-button"
+                disabled={stopping}
+                onClick={onStop}
               >
-                <Zap size={12} /> Interrupt &amp; steer
+                <Square size={10} fill="currentColor" /> {stopping ? "Stopping…" : "Stop"}
               </button>
-            ) : null}
-            <button className="send-button" type="submit" disabled={!agent.sandboxName || !draft.trim()}>
-              <ArrowUp size={16} />
-              <span>{busy ? "Queue" : "Send"}</span>
-            </button>
+            ) : (
+              <button className="send-button" type="submit" disabled={!agent.sandboxName || !draft.trim()}>
+                <ArrowUp size={16} />
+                <span>Send</span>
+              </button>
+            )}
           </div>
         </div>
       </form>
@@ -313,6 +322,8 @@ export function AgentChat({ project, agent }: { project: Project; agent: Agent }
   const { selection } = useResearchState();
   const [diagnosticsOpen, setDiagnosticsOpen] = useState(false);
   const [repairing, setRepairing] = useState(false);
+  const [stoppingOutput, setStoppingOutput] = useState(false);
+  const [stopOutputError, setStopOutputError] = useState<string | null>(null);
   const [repairError, setRepairError] = useState<string | null>(null);
   const didInitialScroll = useRef(false);
   const consumedMessages = useRef(new Set<string>());
@@ -361,12 +372,25 @@ export function AgentChat({ project, agent }: { project: Project; agent: Agent }
     void scrollToBottom({ animation: "instant", preserveScrollPosition: true });
   }, [conversation.events.length, conversation.turns.length, isAtBottom, scrollToBottom]);
 
-  const handleSend = useCallback((body: string, mode: "queue" | "interrupt") => {
-    conversation.send(body, mode);
+  const handleSend = useCallback((body: string) => {
+    conversation.send(body, "queue");
     requestAnimationFrame(() => {
       void scrollToBottom({ animation: "instant", ignoreEscapes: true });
     });
   }, [conversation, scrollToBottom]);
+
+  const handleStopOutput = useCallback(async () => {
+    if (!agent.sandboxName || stoppingOutput) return;
+    setStoppingOutput(true);
+    setStopOutputError(null);
+    try {
+      await interruptAgent(agent.sandboxName);
+    } catch (error) {
+      setStopOutputError(error instanceof Error ? error.message : "The active response could not be stopped.");
+    } finally {
+      setStoppingOutput(false);
+    }
+  }, [agent.sandboxName, stoppingOutput]);
 
   const handleRepair = useCallback(async (retryTurn?: PendingTurn) => {
     if (!agent.sandboxName || repairing) return;
@@ -392,7 +416,7 @@ export function AgentChat({ project, agent }: { project: Project; agent: Agent }
   }, [conversation, handleRepair]);
 
   const streamLabel = conversation.activity;
-  const provisioning = project.lifecycle === "provisioning";
+  const provisioning = project.lifecycle === "provisioning" || agent.status === "provisioning";
   const launchFailed = project.lifecycle === "failed";
 
   return (
@@ -495,7 +519,15 @@ export function AgentChat({ project, agent }: { project: Project; agent: Agent }
           </aside>
       ) : null}
 
-      <Composer agent={agent} busy={conversation.busy} queued={conversation.queued} onSend={handleSend} />
+      <Composer
+        agent={agent}
+        busy={conversation.busy}
+        queued={conversation.queued}
+        onSend={handleSend}
+        onStop={() => void handleStopOutput()}
+        stopping={stoppingOutput}
+        stopError={stopOutputError}
+      />
     </section>
   );
 }

@@ -4,15 +4,15 @@ import { useState } from "react";
 import { ArrowDownRight, ArrowUpRight, Check, ChevronRight, Cpu, Database, Network, Sparkles, Trash2, X } from "lucide-react";
 import { KpiChart } from "@/components/charts/kpi-chart";
 import { StatusDot, StatusPill } from "@/components/shared/status";
-import { stopResearchProject } from "@/lib/control-plane-client";
+import { deleteResearchProject } from "@/lib/control-plane-client";
 import type { Project } from "@/lib/types";
 import { useResearchDispatch } from "@/store/research-store";
 
 export function ProjectOverview({ project }: { project: Project }) {
   const dispatch = useResearchDispatch();
-  const [confirmingStop, setConfirmingStop] = useState(false);
-  const [stopping, setStopping] = useState(false);
-  const [stopError, setStopError] = useState<string | null>(null);
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
   const lowerIsBetter = project.unit === "ms";
   const delta = project.baseline ? ((project.best - project.baseline) / project.baseline) * 100 : 0;
   const displayDelta = `${delta > 0 ? "+" : ""}${delta.toFixed(1)}%`;
@@ -27,17 +27,17 @@ export function ProjectOverview({ project }: { project: Project }) {
       : { label: "Source", value: "Repo", unit: "", detail: "committed benchmark" },
   ];
 
-  async function stopProject() {
-    if (project.source !== "live" || !project.projectName || stopping) return;
-    setStopping(true);
-    setStopError(null);
+  async function deleteProject() {
+    if (project.source !== "live" || !project.projectName || deleting) return;
+    setDeleting(true);
+    setDeleteError(null);
     try {
-      await stopResearchProject(project.projectName);
+      await deleteResearchProject(project.projectName);
       dispatch({ type: "select", selection: { type: "home" } });
       dispatch({ type: "refresh-control-plane" });
     } catch (error) {
-      setStopError(error instanceof Error ? error.message : "The research run could not be stopped.");
-      setStopping(false);
+      setDeleteError(error instanceof Error ? error.message : "The project could not be deleted.");
+      setDeleting(false);
     }
   }
 
@@ -58,20 +58,20 @@ export function ProjectOverview({ project }: { project: Project }) {
             </button>
           ) : <span className="baseline-source"><Database size={13} /> Recorded benchmark</span>}
           {project.source === "live" && project.projectName ? (
-            confirmingStop ? (
-              <div className="delete-confirm" role="group" aria-label="Confirm stopping research">
-                <button aria-label="Cancel stopping" onClick={() => setConfirmingStop(false)} disabled={stopping}><X size={14} /></button>
-                <button className="danger-action" onClick={stopProject} disabled={stopping}>
-                  {stopping ? "Stopping…" : `Stop ${registeredAgents.length} sandboxes`}
+            confirmingDelete ? (
+              <div className="delete-confirm" role="group" aria-label="Confirm deleting project">
+                <button aria-label="Cancel deletion" onClick={() => setConfirmingDelete(false)} disabled={deleting}><X size={14} /></button>
+                <button className="danger-action" onClick={deleteProject} disabled={deleting}>
+                  {deleting ? "Deleting…" : `Delete project and ${registeredAgents.length} sandboxes`}
                 </button>
               </div>
             ) : (
-              <button className="delete-project-action" onClick={() => setConfirmingStop(true)}>
-                <Trash2 size={13} /> Stop research
+              <button className="delete-project-action" onClick={() => setConfirmingDelete(true)}>
+                <Trash2 size={13} /> Delete project
               </button>
             )
           ) : null}
-          {stopError ? <p className="delete-project-error" role="alert">{stopError}</p> : null}
+          {deleteError ? <p className="delete-project-error" role="alert">{deleteError}</p> : null}
         </div>
       </header>
 

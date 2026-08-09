@@ -44,7 +44,7 @@ export async function POST(request: Request, context: { params: Promise<{ sandbo
     const args = ["send", sandbox, message.trim(), "--client-id", clientId.trim()];
     if (mode === "interrupt") args.push("--interrupt");
     if (retry) args.push("--retry");
-    const stdout = await runGtz(args, 30_000);
+    const stdout = await runGtz(args, 120_000);
     const parsed = JSON.parse(stdout.trim().split("\n").at(-1) ?? "") as {
       id: string;
       turn_id: string;

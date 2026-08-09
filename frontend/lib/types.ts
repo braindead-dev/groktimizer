@@ -1,5 +1,5 @@
 export type AgentRole = "orchestrator" | "team-orchestrator" | "researcher" | "implementor";
-export type AgentStatus = "running" | "thinking" | "queued" | "complete" | "blocked";
+export type AgentStatus = "provisioning" | "running" | "thinking" | "queued" | "complete" | "blocked";
 export type ProjectStatus = "running" | "paused" | "complete";
 export type ProjectLifecycle = "idle" | "provisioning" | "running" | "failed" | "stopped";
 

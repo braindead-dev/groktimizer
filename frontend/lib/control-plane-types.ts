@@ -8,6 +8,7 @@ export interface LiveAgentSnapshot {
   sandbox_name: string;
   branch: string;
   running: boolean;
+  provisioning: boolean;
   log_mtime: number | null;
   turn_status: AgentTurnStatus;
   active_turn_id: string | null;
@@ -138,6 +139,7 @@ export type AgentStreamEvent =
   | { type: "connection"; data: { mode: "live" } }
   | { type: "status"; data: {
       running: boolean;
+      provisioning: boolean;
       log_mtime: number | null;
       turn_status: AgentTurnStatus;
       active_turn_id: string | null;

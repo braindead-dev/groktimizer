@@ -3,12 +3,7 @@
 import { useState } from "react";
 import {
   ChevronRight,
-  CircleGauge,
-  Clock3,
-  Cpu,
   Network,
-  Radio,
-  Terminal,
   Trash2,
   Workflow,
   X,
@@ -187,23 +182,20 @@ function AgentControl({ project, agent, team }: { project: Project; agent: Agent
   }
 
   return (
-    <PanelShell title="Sandbox session" subtitle={team?.name ?? agent.role}>
-      <div className="researcher-scroll agent-live-details">
-        <div className="experiment-headline">
-          <div><StatusPill status={agent.status} /><h3>{agent.name}</h3><p>{agent.task}</p></div>
-          <CircleGauge size={22} />
-        </div>
-        <section className="agent-facts">
-          <div><Terminal size={13} /><span>Sandbox</span><strong>{agent.sandboxName ?? "Not registered"}</strong></div>
-          <div><Workflow size={13} /><span>Git branch</span><strong>{agent.branchName ?? "Not assigned"}</strong></div>
-          <div><Radio size={13} /><span>Session</span><strong>{agent.status}</strong></div>
-          <div><Clock3 size={13} /><span>Log activity</span><strong>{agent.elapsed}</strong></div>
-          <div><Cpu size={13} /><span>Transport</span><strong>{agent.sandboxName ? "SSE · gtz watch" : "Unavailable"}</strong></div>
+    <PanelShell title={agent.name} subtitle={team?.name ?? (agent.role === "implementor" ? "Reconciliation" : "Implementation")}>
+      <div className="implementation-panel">
+        <section className="implementation-summary">
+          <StatusPill status={agent.status} />
+          <p>{agent.task}</p>
         </section>
-        <div className="agent-live-note"><Radio size={15} /><p><strong>Structured Grok session</strong>Responses, reasoning, and tool activity stream into chat. Raw runner output stays in Diagnostics.</p></div>
+        <dl className="implementation-details">
+          <div><dt>Branch</dt><dd>{agent.branchName ?? "Not assigned"}</dd></div>
+          <div><dt>Sandbox</dt><dd>{agent.sandboxName ?? "Not registered"}</dd></div>
+          <div><dt>Last activity</dt><dd>{agent.elapsed}</dd></div>
+        </dl>
         {canStopIndividually ? (
-          <div className="agent-stop-card">
-            <div><strong>Free this agent slot</strong><span>Stops and removes this sandbox. Completed code remains on its Git branch.</span></div>
+          <section className="implementation-actions">
+            <div><strong>Remove sandbox</strong><span>Code and commits remain on {agent.branchName ?? "the agent branch"}.</span></div>
             {confirmingStop ? (
               <div>
                 <button onClick={() => setConfirmingStop(false)} disabled={stopping}>Cancel</button>
@@ -213,7 +205,7 @@ function AgentControl({ project, agent, team }: { project: Project; agent: Agent
               <button className="delete-project-action" onClick={() => setConfirmingStop(true)}><Trash2 size={12} /> Stop agent</button>
             )}
             {stopError ? <em>{stopError}</em> : null}
-          </div>
+          </section>
         ) : null}
       </div>
     </PanelShell>

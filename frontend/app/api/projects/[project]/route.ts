@@ -26,7 +26,7 @@ export async function DELETE(
       return NextResponse.json({ error: "Project is not attached to this control plane" }, { status: 404 });
     }
 
-    await runGtz(["stop", "--project", project], 120_000);
+    await runGtz(["delete", project], 120_000);
     for (let attempt = 0; attempt < 8; attempt += 1) {
       const current = JSON.parse(await runGtz(["snapshot"])) as ControlPlaneSnapshot;
       const currentProject = current.projects.find((candidate) => candidate.project === project);
