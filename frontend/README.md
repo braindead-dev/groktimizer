@@ -14,9 +14,9 @@ Open [http://localhost:3000](http://localhost:3000).
 ## Structure
 
 - `app/` — Next.js App Router entrypoint and the visual system
-- `app/api/` — local gateway for control-plane snapshots, agent streams, and steering
+- `app/api/` — local/remote gateway for control-plane snapshots, agent streams, and steering
 - `components/` — dashboard, chat, navigation, charts, and role-specific workspaces
-- `lib/control-plane-*` — typed browser/server bridge to the Python operator CLI
+- `lib/control-plane-*` — typed browser/server bridge to the local CLI or remote HTTP service
 - `store/research-store.tsx` — reducer-backed live registry and committed-baseline state
 
 ## Live mode
@@ -26,14 +26,19 @@ app loads `gtz snapshot`, maps the live sandbox registry into the project tree, 
 stream for the selected agent. Steering remains a normal POST that delegates to `gtz send`.
 
 The backend's exec channel is request/response, so the Python `gtz watch` bridge polls that source
-inside one long-lived process and emits JSONL. The Next.js route translates JSONL to browser-native
-SSE with reconnect semantics. No second registry or persistent web service is introduced.
+inside one long-lived process and emits JSONL. In local mode, the Next.js route translates JSONL to
+browser-native SSE. In production mode it requests a short-lived, sandbox-scoped stream ticket and
+redirects the browser directly to the persistent API, avoiding a long-running Vercel function.
 
 Baseline charts use the real `results/*.json` artifacts from the repository configured as
 `shared_repo` in `groktimizer.toml`. The server reads a local checkout when present and otherwise
 uses the authenticated GitHub Contents API, cached for one minute. It does not create mock projects,
 agents, messages, experiments, or compute utilization.
 
-This hackathon control plane supports one active project in the configured research repository.
-Deleting a project requires an explicit second confirmation and removes only its Blaxel sandboxes;
-Git branches and committed research artifacts remain available before a clean restart.
+Set `GTZ_CONTROL_PLANE_URL` and `GTZ_CONTROL_PLANE_TOKEN` as server-only Vercel variables to enable
+remote mode. `GTZ_DASHBOARD_USERNAME` and `GTZ_DASHBOARD_PASSWORD` protect the page and API routes;
+static brand assets and `install.sh` remain public. None of these variables use `NEXT_PUBLIC_`.
+
+Deleting a project requires explicit confirmation and removes its Blaxel sandboxes, attributed
+RunPod resources, and SQLite activity state. Git branches and committed research artifacts remain
+available for audit or a clean restart.

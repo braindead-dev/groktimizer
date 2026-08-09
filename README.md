@@ -14,12 +14,12 @@ main orchestrator (1, team "hq")
     └── implementer
 ```
 
-There is no central service: the registry **is** Blaxel — every agent is a sandbox named
-`gtz-{project}-{team}-{agent}` with `gtz-*` labels, and caps are enforced against live state
-at spawn time. Orchestrators monitor and steer subordinates over the sandbox exec channel
-(read session logs, run commands, resume the subordinate's grok session with a message).
-All of that is exposed to the agents as role-gated MCP tools served by
-`python3 -m groktimizer.mcp` inside each sandbox.
+Blaxel remains the live agent registry: every agent is a sandbox named
+`gtz-{project}-{team}-{agent}` with `gtz-*` labels, and caps are enforced against live state at
+spawn time. The operator control plane durably mirrors projects, ordered turns, events, and runtime
+cursors into SQLite. It is available through the `gtz` CLI and the authenticated `gtz-api` HTTP
+service. Orchestrators monitor and steer subordinates over the sandbox exec channel; role-gated MCP
+tools are served by `python3 -m groktimizer.mcp` inside each sandbox.
 
 ## Install
 
@@ -85,6 +85,21 @@ agent over SSE, and sends steering messages through `gtz send`. Without a live c
 shows only the committed benchmark artifacts from `results/*.json`; synthetic agents are never
 inserted into the project tree.
 
+For production, run `gtz-api` on one persistent host and set these server-only variables on the
+Next.js deployment:
+
+```bash
+GTZ_CONTROL_PLANE_URL=https://api.example.com
+GTZ_CONTROL_PLANE_TOKEN=...
+GTZ_DASHBOARD_USERNAME=operator
+GTZ_DASHBOARD_PASSWORD=...
+```
+
+The browser receives neither the control-plane token nor provider credentials. Agent SSE streams
+use short-lived, sandbox-scoped signed tickets and connect directly to the persistent API host.
+The production Azure topology, Key Vault integration, managed data disk, and backup procedure are
+documented in `deploy/azure/README.md`.
+
 ## Layout
 
 - `groktimizer/core/` — Blaxel adapter (`blaxel_client.py`, the only module touching the SDK),
@@ -92,6 +107,7 @@ inserted into the project tree.
   RunPod wrapper (`gpu.py`).
 - `groktimizer/mcp/` — role-gated MCP server each agent runs.
 - `groktimizer/cli/` — the `gtz` operator CLI.
+- `groktimizer/api.py` — authenticated HTTP gateway, project recovery, and ticketed SSE.
 - `groktimizer/prompts/` — role prompt templates.
 - `frontend/` — Next.js command center, control-plane gateway, and SSE agent streams.
 - `docs/superpowers/specs/` and `docs/superpowers/plans/` — design spec and implementation plan.
@@ -108,10 +124,12 @@ inserted into the project tree.
 - Steering messages are persisted in each sandbox. The web command center streams updates over
   SSE with heartbeats and never inserts synthetic agents or optimistic fake messages.
 
-## Status (2026-08-08)
+## Status (2026-08-09)
 
 The control plane and authenticated multi-agent loop are live-verified against real Blaxel
 sandboxes, including creation, labels, permission-hardened environment files, registry caps,
 branch publication, monitoring, steering, and teardown. RunPod access is wired behind the spend,
 GPU-type, concurrency, and lifetime gates; the current project intentionally avoided provisioning
 hardware that violated those constraints. See `scripts/smoke_e2e.md` for the operator runbook.
+The HTTP control plane is deployed on a supervised Azure VM with boot-time Key Vault retrieval,
+TLS, a separate Premium SSD for SQLite, and geo-redundant Azure Backup.
