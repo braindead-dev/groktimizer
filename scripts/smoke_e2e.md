@@ -1,6 +1,6 @@
-# Smoke test runbook (real Blaxel + RunPod + grok; ~$1)
+# Production smoke-test runbook (Blaxel + RunPod + Grok)
 
-## Already verified live (2026-08-08, Blaxel workspace `hackathon-020472`)
+## Already verified live (2026-08-08)
 
 - Sandbox create with `gtz-*` labels and envs; envs visible to exec'd processes.
 - Registry: `list_agents`/`list_teams` by label, team/implementer caps, project isolation.
@@ -33,20 +33,21 @@
 
 ## Also verified live (2026-08-08, with real RUNPOD_API_KEY)
 
-- Full BudgetedRunPod cycle: `get_gpu` pricing (RTX 4090 @ $0.34/hr), allowlist denial,
+- Full BudgetedRunPod cycle: `get_gpu` pricing, RTX PRO 6000 allowlist enforcement,
   provision (pod created and visible via `get_pods`), ledger live-entry + spend accrual,
   concurrency-cap denial, terminate (pod gone from API, cost settled into the ledger).
 - Availability note: `cloud_type="COMMUNITY"` returned "machine does not have the
   resources"; the SDK default `"ALL"` (what the MCP tool uses) provisioned fine.
 
-## Remaining to verify (needs published tooling repo)
-2. `uv run gtz start "Optimize a softmax CUDA kernel for 4096x4096 fp16. One team, one implementer. Target: beat torch.softmax latency."`
-3. `uv run gtz tree` — within ~10 min expect main + 1 team orchestrator + 1 implementer.
-4. `uv run gtz tail gtz-<project>-hq-main` — orchestrator reasoning visible; confirm the
+## Fresh-environment verification
+
+1. `uv run gtz start "Optimize a softmax CUDA kernel for 4096x4096 fp16. One team, one implementer. Target: beat torch.softmax latency."`
+2. `uv run gtz tree` — within ~10 min expect main + 1 team orchestrator + 1 implementer.
+3. `uv run gtz tail gtz-<project>-hq-main` — orchestrator reasoning visible; confirm the
    groktimizer MCP tools appear in its tool calls (`grok mcp list` in the sandbox).
-5. Watch the shared repo for an `agent/*` branch with a benchmark JSON.
-6. `uv run gtz send gtz-<project>-hq-main "Status report please"` → visible in tail
+4. Watch the shared repo for an `agent/*` branch with a benchmark JSON.
+5. `uv run gtz send gtz-<project>-hq-main "Status report please"` → visible in tail
    (send uses `--continue` from /workspace/project).
-7. `uv run gtz spend` — ledger under ceiling; RunPod console shows no orphan pods.
-8. `uv run gtz stop` — `gtz tree` empty (allow a few seconds for deletion propagation);
+6. `uv run gtz spend` — ledger under ceiling; RunPod console shows no orphan pods.
+7. `uv run gtz stop` — `gtz tree` empty (allow a few seconds for deletion propagation);
    Blaxel console shows no `gtz-*` sandboxes.

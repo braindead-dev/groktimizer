@@ -17,7 +17,7 @@ Open [http://localhost:3000](http://localhost:3000).
 - `app/api/` — local/remote gateway for control-plane snapshots, agent streams, and steering
 - `components/` — dashboard, chat, navigation, charts, and role-specific workspaces
 - `lib/control-plane-*` — typed browser/server bridge to the local CLI or remote HTTP service
-- `store/research-store.tsx` — reducer-backed live registry and committed-baseline state
+- `store/research-store.tsx` — reducer-backed projection of live and persisted control-plane state
 
 ## Live mode
 
@@ -30,10 +30,11 @@ inside one long-lived process and emits JSONL. In local mode, the Next.js route 
 browser-native SSE. In production mode it requests a short-lived, sandbox-scoped stream ticket and
 redirects the browser directly to the persistent API, avoiding a long-running Vercel function.
 
-Baseline charts use the real `results/*.json` artifacts from the repository configured as
-`shared_repo` in `groktimizer.toml`. The server reads a local checkout when present and otherwise
-uses the authenticated GitHub Contents API, cached for one minute. It does not create mock projects,
-agents, messages, experiments, or compute utilization.
+Live registry snapshots and installed research records share one typed control-plane response.
+Versioned research records are validated and installed by the Python service; React components
+never embed project-specific teams, agents, metrics, messages, experiments, or compute utilization.
+If the control plane is unavailable, the app reports that state instead of manufacturing fallback
+projects.
 
 Set `GTZ_CONTROL_PLANE_URL` and `GTZ_CONTROL_PLANE_TOKEN` as server-only Vercel variables to enable
 remote mode. Neither variable uses `NEXT_PUBLIC_`, and provider credentials never enter Vercel.

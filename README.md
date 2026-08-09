@@ -7,8 +7,8 @@ tools and collaborating through a shared git repo.
 
 ```
 main orchestrator (1, team "hq")
-├── team orchestrator (≤3 teams)
-│   ├── implementer (≤5 per team)
+├── team orchestrator (≤5 teams)
+│   ├── implementer (≤3 per team)
 │   └── implementer
 └── team orchestrator
     └── implementer
@@ -39,6 +39,7 @@ export GITHUB_TOKEN=...                         # fine-grained Contents read/wri
 uv run gtz start "Optimize softmax kernels for fp16 4096x4096; beat torch.softmax."
 uv run gtz tree                     # teams and agents
 uv run gtz snapshot                 # machine-readable live control-plane state
+uv run gtz import-record research/grok2-program.json  # install validated run evidence
 uv run gtz tail <sandbox-name>      # an agent runner's diagnostic log
 uv run gtz watch <sandbox-name>     # stream status + log snapshots as JSONL
 uv run gtz send <sandbox-name> "Status report please"
@@ -81,9 +82,22 @@ npm run dev
 
 Open [http://localhost:3000](http://localhost:3000). With `groktimizer.toml` and credentials
 configured at the repository root, the UI reads the live Blaxel registry, streams the selected
-agent over SSE, and sends steering messages through `gtz send`. Without a live connection it
-shows only the committed benchmark artifacts from `results/*.json`; synthetic agents are never
-inserted into the project tree.
+agent over SSE, and sends steering messages through `gtz send`. Validated research records can
+also be installed into the same SQLite control plane for durable review of completed and ongoing
+runs. The UI never owns project metrics, teams, agent activity, or conversation fixtures.
+
+Our flagship use of Groktimizer is improving Grok 2 inference and adding vision capabilities. The
+source-linked results live in `research/grok2-program.json`, where they are normal control-plane
+data rather than product logic. Importing the record validates every project, metric series, team,
+and agent before an idempotent transaction creates the corresponding projects and ordered event
+history:
+
+```bash
+uv run gtz import-record research/grok2-program.json --exclusive
+```
+
+`--exclusive` removes stale projects from the durable store, which is useful for a focused
+operator deployment. Omitting it preserves unrelated projects.
 
 For production, run `gtz-api` on one persistent host and set these server-only variables on the
 Next.js deployment:
@@ -106,21 +120,24 @@ documented in `deploy/azure/README.md`.
 - `groktimizer/mcp/` — role-gated MCP server each agent runs.
 - `groktimizer/cli/` — the `gtz` operator CLI.
 - `groktimizer/api.py` — authenticated HTTP gateway, project recovery, and ticketed SSE.
+- `groktimizer/core/research_record.py` — validated research-record schema and idempotent importer.
+- `research/` — source-linked research programs consumed by the control plane.
 - `groktimizer/prompts/` — role prompt templates.
 - `frontend/` — Next.js command center, control-plane gateway, and SSE agent streams.
-- `docs/superpowers/specs/` and `docs/superpowers/plans/` — design spec and implementation plan.
+- `docs/architecture.md` — current data ownership, transport, and production topology.
 - `scripts/smoke_e2e.md` — real-infrastructure smoke-test runbook.
 
 ## Runtime contract
 
 - Main, team, implementer, and reconciler agents are pinned to `grok-4.5` with high reasoning.
-- A project can create at most three teams and five implementers per team.
+- A project can create at most five teams and three implementers per team.
 - With two xAI keys, new sandboxes choose the least-used quota slot. Only orchestrators receive
   the private key pool needed to allocate keys to descendants.
 - Branches are isolated as `main`, `team/<team>`, and `agent/<team>/<agent>` and are published
   during sandbox bootstrap.
-- Steering messages are persisted in each sandbox. The web command center streams updates over
-  SSE with heartbeats and never inserts synthetic agents or optimistic fake messages.
+- Steering messages are persisted in each sandbox. Imported run history uses the same ordered
+  turn/event schema and SSE heartbeat contract as live agents, so every operator view reads one
+  durable data model.
 
 ## Status (2026-08-09)
 
