@@ -1313,7 +1313,6 @@ textarea::placeholder { color: #a6a89f; }
 .result-comparison span { background: var(--surface); }
 
 .chart-grid-line { stroke: rgba(250, 250, 249, 0.075); }
-.baseline-line { stroke: rgba(250, 250, 249, 0.24); }
 .pulse-stats { border-color: var(--line); background: var(--line); }
 .canvas-grid,
 .frontier-plot {

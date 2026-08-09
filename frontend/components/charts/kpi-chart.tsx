@@ -1,6 +1,6 @@
 "use client";
 
-import { useId, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import type { MetricSeries } from "@/lib/types";
 
 interface KpiChartProps {
@@ -34,7 +34,6 @@ function formatValue(value: number) {
 }
 
 export function KpiChart({ series }: KpiChartProps) {
-  const patternId = useId().replace(/:/g, "");
   const pointCount = Math.max(...series.map((metric) => metric.points.length), 0);
   const [hovered, setHovered] = useState(Math.max(0, pointCount - 1));
   const plotted = useMemo(() => series.map((metric) => ({
@@ -70,11 +69,6 @@ export function KpiChart({ series }: KpiChartProps) {
         aria-label="KPI improvements over successive validated research steps"
         onPointerLeave={() => setHovered(Math.max(0, pointCount - 1))}
       >
-        <defs>
-          <pattern id={patternId} width="6" height="6" patternUnits="userSpaceOnUse">
-            <circle cx="1.5" cy="1.5" r="1" fill="currentColor" />
-          </pattern>
-        </defs>
         {[0, 1, 2, 3, 4].map((line) => {
           const y = PAD_Y + (line / 4) * (HEIGHT - PAD_Y * 2);
           return <line className="chart-grid-line" key={line} x1={PAD_X} y1={y} x2={WIDTH - PAD_X} y2={y} />;
