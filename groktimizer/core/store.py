@@ -144,9 +144,7 @@ class Store:
 
     def _backup_legacy_store(self, version: int) -> None:
         stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
-        backup_path = self.path.with_name(
-            f"{self.path.name}.schema-v{version}-{stamp}.bak"
-        )
+        backup_path = self.path.with_name(f"{self.path.name}.schema-v{version}-{stamp}.bak")
         with sqlite3.connect(backup_path) as backup:
             self.db.backup(backup)
 
@@ -164,14 +162,10 @@ class Store:
                 self.db.execute("UPDATE projects SET updated_at=created_at WHERE updated_at='' ")
             self.db.execute("UPDATE projects SET status='running' WHERE status='active'")
             if "title" not in project_columns:
-                self.db.execute(
-                    "ALTER TABLE projects ADD COLUMN title TEXT NOT NULL DEFAULT ''"
-                )
+                self.db.execute("ALTER TABLE projects ADD COLUMN title TEXT NOT NULL DEFAULT ''")
 
             if "runtime_id" not in agent_columns:
-                self.db.execute(
-                    "ALTER TABLE agents ADD COLUMN runtime_id TEXT NOT NULL DEFAULT ''"
-                )
+                self.db.execute("ALTER TABLE agents ADD COLUMN runtime_id TEXT NOT NULL DEFAULT ''")
             if "event_cursor" not in agent_columns:
                 self.db.execute(
                     "ALTER TABLE agents ADD COLUMN event_cursor INTEGER NOT NULL DEFAULT 0"
@@ -289,8 +283,7 @@ class Store:
                 (name,),
             )
             self.db.execute(
-                "DELETE FROM turns WHERE sandbox IN "
-                "(SELECT sandbox FROM agents WHERE project=?)",
+                "DELETE FROM turns WHERE sandbox IN (SELECT sandbox FROM agents WHERE project=?)",
                 (name,),
             )
             self.db.execute("DELETE FROM agents WHERE project=?", (name,))
@@ -361,9 +354,7 @@ class Store:
 
     # -- agents -----------------------------------------------------------
 
-    def upsert_agent(
-        self, sandbox: str, *, project: str, team: str, name: str, role: str
-    ) -> bool:
+    def upsert_agent(self, sandbox: str, *, project: str, team: str, name: str, role: str) -> bool:
         with self.db:
             cursor = self.db.execute(
                 "INSERT INTO agents (sandbox, project, team, name, role, created_at)"

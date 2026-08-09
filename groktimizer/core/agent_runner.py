@@ -359,9 +359,7 @@ def normalize_stream_event(raw: dict[str, Any]) -> tuple[str, dict[str, Any]] | 
         raw_input = update.get("rawInput")
         tool_name = raw_input.get("tool_name") if isinstance(raw_input, dict) else None
         tool_input = (
-            raw_input.get("tool_input", raw_input)
-            if isinstance(raw_input, dict)
-            else raw_input
+            raw_input.get("tool_input", raw_input) if isinstance(raw_input, dict) else raw_input
         )
         return "tool", {
             "toolCallId": update.get("toolCallId"),
@@ -381,9 +379,7 @@ def normalize_stream_event(raw: dict[str, Any]) -> tuple[str, dict[str, Any]] | 
         raw_input = update.get("rawInput")
         if raw_input is not None:
             payload["input"] = (
-                raw_input.get("tool_input", raw_input)
-                if isinstance(raw_input, dict)
-                else raw_input
+                raw_input.get("tool_input", raw_input) if isinstance(raw_input, dict) else raw_input
             )
         content = _content_text(update.get("content") or update.get("rawOutput"))
         if content:

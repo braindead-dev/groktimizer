@@ -278,9 +278,7 @@ async def test_stream_completion_signals_process_exit(monkeypatch, tmp_path):
     assert completion.is_set()
 
 
-def test_maintenance_recovery_completes_finished_turn_and_requeues_inflight(
-    monkeypatch, tmp_path
-):
+def test_maintenance_recovery_completes_finished_turn_and_requeues_inflight(monkeypatch, tmp_path):
     use_temp_db(monkeypatch, tmp_path)
     agent_runner.init_runtime("session-1", started=True)
     for index in (1, 2):

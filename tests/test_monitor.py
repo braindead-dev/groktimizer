@@ -227,7 +227,7 @@ async def test_repair_completes_legacy_bootstrap_with_current_config():
                     ),
                     exit_code=0,
                 )
-            if "find \"$HOME/.grok/sessions" in command:
+            if 'find "$HOME/.grok/sessions' in command:
                 return ExecResult(stdout="legacy-session\n", exit_code=0)
             return await super().exec(name, command, timeout_s)
 

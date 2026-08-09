@@ -33,8 +33,8 @@ def _quiesce_runner() -> str:
         "tmux kill-session -t gtz 2>/dev/null || true; "
         "for signal in TERM KILL; do "
         "for proc_dir in /proc/[0-9]*; do "
-        "test \"$(cat \"$proc_dir/comm\" 2>/dev/null)\" = grok || continue; "
-        "kill -$signal \"${proc_dir##*/}\" 2>/dev/null || true; "
+        'test "$(cat "$proc_dir/comm" 2>/dev/null)" = grok || continue; '
+        'kill -$signal "${proc_dir##*/}" 2>/dev/null || true; '
         "done; sleep 0.2; done; "
     )
 
@@ -197,7 +197,7 @@ async def repair_runtime(client: SandboxClient, name: str, cfg: Config | None = 
             raise RuntimeError("unsupported agent runner; bootstrap repair is required")
         legacy_session = await client.exec(
             name,
-            "find \"$HOME/.grok/sessions/%2Fworkspace%2Fproject\" "
+            'find "$HOME/.grok/sessions/%2Fworkspace%2Fproject" '
             "-mindepth 1 -maxdepth 1 -type d -printf '%T@ %f\\n' 2>/dev/null "
             "| sort -nr | head -n 1 | cut -d' ' -f2-",
         )
@@ -259,7 +259,7 @@ async def repair_runtime(client: SandboxClient, name: str, cfg: Config | None = 
             f"{exports} {{ . /opt/gtz/.env; }} 2>/dev/null; "
             "{ . /opt/gtz/config.env; } 2>/dev/null; "
             'export PATH="$HOME/.local/bin:$HOME/.grok/bin:$PATH"; '
-            f"chmod 700 {RUNNER}; pip install --quiet \"git+${{GTZ_TOOLING_REPO}}\"; "
+            f'chmod 700 {RUNNER}; pip install --quiet "git+${{GTZ_TOOLING_REPO}}"; '
             "grok mcp remove groktimizer >/dev/null 2>&1 || true; "
             "grok mcp add groktimizer -- python3 -m groktimizer.mcp; "
             f"{init}; {enqueue}; {start}",
