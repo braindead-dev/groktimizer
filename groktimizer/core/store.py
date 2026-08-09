@@ -72,6 +72,10 @@ def _now() -> str:
     return datetime.now(UTC).isoformat()
 
 
+def _columns(db: sqlite3.Connection, table: str) -> set[str]:
+    return {str(row["name"]) for row in db.execute(f"PRAGMA table_info({table})")}  # noqa: S608
+
+
 class Store:
     def __init__(self, path: Path | None = None):
         self.path = path or default_db_path()
@@ -81,10 +85,18 @@ class Store:
         self.db.execute("PRAGMA journal_mode=WAL")
         self.db.execute("PRAGMA busy_timeout=5000")
         version = int(self.db.execute("PRAGMA user_version").fetchone()[0])
-        existing = self.db.execute(
-            "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'"
-        ).fetchone()
-        if existing and version != SCHEMA_VERSION:
+        tables = {
+            str(row["name"])
+            for row in self.db.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'"
+            )
+        }
+        existing = bool(tables)
+        legacy_tables = {"projects", "agents", "messages", "log_chunks"}
+        if existing and version == 0 and legacy_tables.issubset(tables):
+            self._backup_legacy_store(version)
+            self._migrate_legacy_store()
+        elif existing and version != SCHEMA_VERSION:
             raise RuntimeError(
                 f"unsupported store schema {version}; delete {self.path} "
                 f"for schema {SCHEMA_VERSION}"
@@ -92,6 +104,56 @@ class Store:
         self.db.executescript(_SCHEMA)
         self.db.execute(f"PRAGMA user_version={SCHEMA_VERSION}")
         self.db.commit()
+
+    def _backup_legacy_store(self, version: int) -> None:
+        stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
+        backup_path = self.path.with_name(
+            f"{self.path.name}.schema-v{version}-{stamp}.bak"
+        )
+        with sqlite3.connect(backup_path) as backup:
+            self.db.backup(backup)
+
+    def _migrate_legacy_store(self) -> None:
+        """Upgrade the original unversioned store without discarding local history."""
+        project_columns = _columns(self.db, "projects")
+        agent_columns = _columns(self.db, "agents")
+        with self.db:
+            if "error" not in project_columns:
+                self.db.execute("ALTER TABLE projects ADD COLUMN error TEXT")
+            if "updated_at" not in project_columns:
+                self.db.execute(
+                    "ALTER TABLE projects ADD COLUMN updated_at TEXT NOT NULL DEFAULT ''"
+                )
+                self.db.execute("UPDATE projects SET updated_at=created_at WHERE updated_at='' ")
+            self.db.execute("UPDATE projects SET status='running' WHERE status='active'")
+
+            if "runtime_id" not in agent_columns:
+                self.db.execute(
+                    "ALTER TABLE agents ADD COLUMN runtime_id TEXT NOT NULL DEFAULT ''"
+                )
+            if "event_cursor" not in agent_columns:
+                self.db.execute(
+                    "ALTER TABLE agents ADD COLUMN event_cursor INTEGER NOT NULL DEFAULT 0"
+                )
+            if "runtime_json" not in agent_columns:
+                self.db.execute(
+                    "ALTER TABLE agents ADD COLUMN runtime_json TEXT NOT NULL DEFAULT '{}'"
+                )
+
+            self.db.executescript(_SCHEMA)
+            has_messages = self.db.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='messages'"
+            ).fetchone()
+            if has_messages:
+                self.db.execute(
+                    "INSERT OR IGNORE INTO turns("
+                    "id, sandbox, client_id, prompt, display_prompt, mode, sender_kind, "
+                    "sender_sandbox, sender_label, status, created_at, started_at, finished_at, "
+                    "error, revision) "
+                    "SELECT id, sandbox, id, body, body, 'queue', 'operator', NULL, NULL, "
+                    "'completed', at, NULL, at, NULL, 0 FROM messages WHERE role='user'"
+                )
+            self.db.execute(f"PRAGMA user_version={SCHEMA_VERSION}")
 
     def __enter__(self) -> "Store":
         return self

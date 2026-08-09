@@ -104,7 +104,52 @@ def test_turn_status_cannot_regress_from_an_older_revision(store):
     assert saved["revision"] == 4
 
 
-def test_store_rejects_an_unversioned_existing_schema(tmp_path):
+def test_store_migrates_original_unversioned_schema(tmp_path):
+    import sqlite3
+
+    path = tmp_path / "legacy.db"
+    with sqlite3.connect(path) as db:
+        db.executescript(
+            """
+            CREATE TABLE projects (
+              name TEXT PRIMARY KEY, objective TEXT NOT NULL DEFAULT '',
+              status TEXT NOT NULL DEFAULT 'active', created_at TEXT NOT NULL, stopped_at TEXT
+            );
+            CREATE TABLE agents (
+              sandbox TEXT PRIMARY KEY, project TEXT NOT NULL, team TEXT NOT NULL,
+              name TEXT NOT NULL, role TEXT NOT NULL, created_at TEXT NOT NULL,
+              terminated_at TEXT, log_offset INTEGER NOT NULL DEFAULT 0
+            );
+            CREATE TABLE messages (
+              id TEXT PRIMARY KEY, sandbox TEXT NOT NULL, role TEXT NOT NULL,
+              body TEXT NOT NULL, at TEXT NOT NULL
+            );
+            CREATE TABLE log_chunks (
+              id INTEGER PRIMARY KEY AUTOINCREMENT, sandbox TEXT NOT NULL,
+              content TEXT NOT NULL, at TEXT NOT NULL
+            );
+            INSERT INTO projects VALUES ('demo', 'Make it fast', 'active', '2026-01-01', NULL);
+            INSERT INTO agents VALUES (
+              'gtz-demo-hq-main', 'demo', 'hq', 'main', 'main', '2026-01-01', NULL, 0
+            );
+            INSERT INTO messages VALUES (
+              'message-1', 'gtz-demo-hq-main', 'user', 'Try batching', '2026-01-02'
+            );
+            """
+        )
+
+    with Store(path) as migrated:
+        assert migrated.db.execute("PRAGMA user_version").fetchone()[0] == 2
+        assert migrated.list_projects()[0]["status"] == "running"
+        assert migrated.list_projects()[0]["updated_at"] == "2026-01-01"
+        assert migrated.conversation_for("gtz-demo-hq-main")["turns"][0]["prompt"] == "Try batching"
+        assert migrated.db.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='messages'"
+        ).fetchone()
+    assert len(list(tmp_path.glob("legacy.db.schema-v0-*.bak"))) == 1
+
+
+def test_store_rejects_an_unknown_unversioned_schema(tmp_path):
     import sqlite3
 
     path = tmp_path / "legacy.db"
