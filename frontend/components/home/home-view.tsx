@@ -107,7 +107,7 @@ export function HomeView() {
                 </div>
                 <p className="recent-project-objective">{project.objective}</p>
                 {project.source !== "live" ? (
-                  <footer><strong>{project.best}<small>{project.unit}</small></strong><span>{project.metric}</span></footer>
+                  <footer><strong>{project.best}<small> {project.unit} {project.metric.toLowerCase()}</small></strong></footer>
                 ) : null}
               </button>
             );
