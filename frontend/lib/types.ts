@@ -14,6 +14,7 @@ export interface Agent {
   elapsed: string;
   sandboxName?: string;
   branchName?: string;
+  runnerKind?: "durable" | "legacy" | "unavailable";
 }
 
 export interface ResearchTeam {

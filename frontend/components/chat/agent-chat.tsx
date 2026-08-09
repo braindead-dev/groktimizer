@@ -33,11 +33,9 @@ interface ToolPart {
   input?: unknown;
 }
 
-interface TurnParts {
-  text: string;
-  reasoning: string;
-  tools: ToolPart[];
-}
+type ConversationBlock =
+  | { id: string; type: "text" | "reasoning"; content: string }
+  | { id: string; type: "tools"; tools: ToolPart[] };
 
 function formatTime(at: string | null) {
   if (!at) return "";
@@ -58,29 +56,48 @@ function payloadText(event: ChatEvent) {
   return typeof event.payload.text === "string" ? event.payload.text : "";
 }
 
-function foldParts(events: ChatEvent[]): TurnParts {
-  let text = "";
-  let reasoning = "";
+function conversationBlocks(events: ChatEvent[]): ConversationBlock[] {
+  const blocks: ConversationBlock[] = [];
   const tools = new Map<string, ToolPart>();
-  for (const event of events) {
-    if (event.type === "assistant_text") text = mergeChunk(text, payloadText(event));
-    if (event.type === "reasoning") reasoning = mergeChunk(reasoning, payloadText(event));
-    if (event.type === "tool") {
-      const id = typeof event.payload.toolCallId === "string" ? event.payload.toolCallId : event.id;
-      const previous = tools.get(id);
-      tools.set(id, {
-        id,
-        title: typeof event.payload.title === "string" ? event.payload.title : previous?.title ?? "Tool call",
-        status: typeof event.payload.status === "string" ? event.payload.status : previous?.status ?? "pending",
-        content: mergeChunk(
-          previous?.content ?? "",
-          typeof event.payload.content === "string" ? event.payload.content : "",
-        ),
-        input: event.payload.input ?? previous?.input,
-      });
+  for (const event of [...events].sort((left, right) => left.seq - right.seq)) {
+    if (event.type === "assistant_text" || event.type === "reasoning") {
+      const type = event.type === "assistant_text" ? "text" : "reasoning";
+      const content = payloadText(event);
+      if (!content) continue;
+      const previous = blocks.at(-1);
+      if (previous?.type === type) {
+        previous.content = mergeChunk(previous.content, content);
+      } else {
+        blocks.push({ id: event.id, type, content });
+      }
+      continue;
     }
+    if (event.type !== "tool") continue;
+    const id = typeof event.payload.toolCallId === "string" ? event.payload.toolCallId : event.id;
+    const previous = tools.get(id);
+    if (previous) {
+      previous.title = typeof event.payload.title === "string" ? event.payload.title : previous.title;
+      previous.status = typeof event.payload.status === "string" ? event.payload.status : previous.status;
+      previous.content = mergeChunk(
+        previous.content,
+        typeof event.payload.content === "string" ? event.payload.content : "",
+      );
+      previous.input = event.payload.input ?? previous.input;
+      continue;
+    }
+    const tool = {
+      id,
+      title: typeof event.payload.title === "string" ? event.payload.title : "Tool call",
+      status: typeof event.payload.status === "string" ? event.payload.status : "pending",
+      content: typeof event.payload.content === "string" ? event.payload.content : "",
+      input: event.payload.input,
+    };
+    tools.set(id, tool);
+    const last = blocks.at(-1);
+    if (last?.type === "tools") last.tools.push(tool);
+    else blocks.push({ id: event.id, type: "tools", tools: [tool] });
   }
-  return { text, reasoning, tools: [...tools.values()] };
+  return blocks;
 }
 
 function senderName(turn: ChatTurn) {
@@ -90,7 +107,7 @@ function senderName(turn: ChatTurn) {
 }
 
 function turnStateLabel(turn: ChatTurn) {
-  if (turn.status === "queued") return "Queued";
+  if (turn.status === "queued") return "Waiting";
   if (turn.status === "running") return "Working";
   if (turn.status === "interrupting") return "Interrupting";
   if (turn.status === "interrupted") return "Interrupted";
@@ -99,16 +116,46 @@ function turnStateLabel(turn: ChatTurn) {
 }
 
 function ToolBlock({ tool }: { tool: ToolPart }) {
+  const label = tool.title
+    .replace(/^groktimizer__/, "")
+    .replaceAll("_", " ");
   return (
     <details className="chat-tool-block">
       <summary>
         <Code2 size={13} />
-        <span>{tool.title}</span>
+        <span>{label}</span>
         <small>{tool.status.replaceAll("_", " ")}</small>
         <ChevronDown size={12} />
       </summary>
-      {tool.input !== undefined ? <pre>{JSON.stringify(tool.input, null, 2)}</pre> : null}
-      {tool.content ? <pre>{tool.content}</pre> : null}
+      <div className="chat-tool-details">
+        <section>
+          <span>Response</span>
+          <pre>{tool.content || "No response was recorded for this tool call."}</pre>
+        </section>
+        {tool.input !== undefined ? (
+          <section>
+            <span>Input</span>
+            <pre>{JSON.stringify(tool.input, null, 2)}</pre>
+          </section>
+        ) : null}
+      </div>
+    </details>
+  );
+}
+
+function ToolGroup({ tools }: { tools: ToolPart[] }) {
+  const completed = tools.filter((tool) => tool.status === "completed").length;
+  return (
+    <details className="chat-tool-group">
+      <summary>
+        <Code2 size={13} />
+        <span>{tools.length} tool {tools.length === 1 ? "call" : "calls"}</span>
+        <small>{completed === tools.length ? "Completed" : `${completed}/${tools.length} complete`}</small>
+        <ChevronDown size={12} />
+      </summary>
+      <div className="chat-tool-list">
+        {tools.map((tool) => <ToolBlock key={tool.id} tool={tool} />)}
+      </div>
     </details>
   );
 }
@@ -122,49 +169,52 @@ function TurnBlock({
   events: ChatEvent[];
   onRetry: (turn: ChatTurn) => void;
 }) {
-  const parts = foldParts(events);
+  const blocks = conversationBlocks(events);
   const active = turn.status === "running" || turn.status === "interrupting";
   return (
     <article className={`chat-turn chat-turn-${turn.status}`}>
       <div className="chat-user-message">
-        <div className="chat-message-meta">
-          <strong>{senderName(turn)}</strong>
-          <span>{formatTime(turn.created_at)}</span>
-        </div>
         <p>{turn.display_prompt}</p>
         <small className={`turn-state turn-state-${turn.status}`}>
+          {turn.sender_kind !== "operator" ? <span>{senderName(turn)} · </span> : null}
           {turn.mode === "interrupt" ? <Zap size={10} /> : null}
           {turnStateLabel(turn)}
+          <span> · {formatTime(turn.created_at)}</span>
         </small>
       </div>
 
       <div className="chat-agent-response">
-        {parts.reasoning ? (
-          <details className="chat-reasoning" open={active}>
-            <summary>
-              <Brain size={13} />
-              <span>{active ? "Thinking…" : "Reasoning"}</span>
-              <ChevronDown size={12} />
-            </summary>
-            <div className="markdown-body">
-              <ReactMarkdown remarkPlugins={[remarkGfm]}>{parts.reasoning}</ReactMarkdown>
+        {blocks.map((block) => {
+          if (block.type === "tools") return <ToolGroup key={block.id} tools={block.tools} />;
+          if (block.type === "reasoning") {
+            return (
+              <details className="chat-reasoning" open={active} key={block.id}>
+                <summary>
+                  <Brain size={13} />
+                  <span>{active ? "Thinking…" : "Reasoning"}</span>
+                  <ChevronDown size={12} />
+                </summary>
+                <div className="markdown-body">
+                  <ReactMarkdown remarkPlugins={[remarkGfm]}>{block.content}</ReactMarkdown>
+                </div>
+              </details>
+            );
+          }
+          return (
+            <div className="chat-assistant-message markdown-body" key={block.id}>
+              <ReactMarkdown remarkPlugins={[remarkGfm]}>{block.content}</ReactMarkdown>
             </div>
-          </details>
+          );
+        })}
+
+        {blocks.length === 0 && (active || turn.status === "queued") ? (
+          <div className="chat-planning-placeholder">
+            <span>{turn.status === "queued" ? "Waiting to run…" : "Working…"}</span>
+          </div>
         ) : null}
 
-        {parts.tools.map((tool) => <ToolBlock key={tool.id} tool={tool} />)}
-
-        {parts.text ? (
-          <div className="chat-assistant-message markdown-body">
-            <ReactMarkdown remarkPlugins={[remarkGfm]}>{parts.text}</ReactMarkdown>
-            <span>{formatTime(turn.finished_at ?? turn.started_at)}</span>
-          </div>
-        ) : active || turn.status === "queued" ? (
-          <div className="chat-planning-placeholder">
-            <span className="shimmer">
-              {turn.status === "queued" ? "Waiting for the current turn…" : "Planning next steps…"}
-            </span>
-          </div>
+        {blocks.length ? (
+          <span className="chat-response-time">{formatTime(turn.finished_at ?? turn.started_at)}</span>
         ) : null}
 
         {turn.status === "interrupted" ? (
@@ -220,8 +270,8 @@ function Composer({
       {busy || queued ? (
         <div className="composer-run-state">
           <Radio size={11} />
-          {busy ? "Agent is working" : "Agent is idle"}
-          {queued ? <span>{queued} queued</span> : null}
+          {busy ? "Working" : `${queued} ${queued === 1 ? "message" : "messages"} waiting`}
+          {busy && queued ? <span>{queued} waiting</span> : null}
         </div>
       ) : null}
       <form className="chat-composer" onSubmit={handleSubmit}>
@@ -382,12 +432,16 @@ export function AgentChat({ project, agent }: { project: Project; agent: Agent }
       ) : conversation.runtime.running === false && !provisioning ? (
         <div className="agent-recovery-banner" role="alert">
           <div>
-            <strong>Agent runner is stopped</strong>
-            <span>Repair it to resume the same Grok session, or stop the sandbox from Workspace.</span>
+            <strong>{agent.runnerKind === "legacy" ? "Agent needs a runner upgrade" : "Agent runner is stopped"}</strong>
+            <span>
+              {agent.runnerKind === "legacy"
+                ? "This sandbox used the legacy one-shot runtime. Upgrade it to restart from its research brief with durable chat and queue state."
+                : "Repair it to resume the same Grok session, or stop the sandbox from Workspace."}
+            </span>
             {repairError ? <em>{repairError}</em> : null}
           </div>
           <button type="button" onClick={() => void handleRepair()} disabled={repairing}>
-            <RotateCcw size={12} /> {repairing ? "Repairing…" : "Repair agent"}
+            <RotateCcw size={12} /> {repairing ? "Repairing…" : agent.runnerKind === "legacy" ? "Upgrade runner" : "Repair agent"}
           </button>
         </div>
       ) : null}

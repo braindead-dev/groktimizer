@@ -2,7 +2,6 @@
 
 import { useState } from "react";
 import {
-  Activity,
   ChevronRight,
   CircleGauge,
   Clock3,
@@ -34,14 +33,6 @@ function PanelShell({ title, subtitle, children }: { title: string; subtitle: st
   );
 }
 
-function registeredAgents(project: Project) {
-  return [
-    project.orchestrator,
-    ...project.teams.flatMap((team) => [team.orchestrator, ...team.agents]),
-    project.implementor,
-  ].filter((agent) => agent.sandboxName);
-}
-
 function RegistryRow({ project, agent, scope }: { project: Project; agent: Agent; scope: string }) {
   const dispatch = useResearchDispatch();
   return (
@@ -59,69 +50,90 @@ function RegistryRow({ project, agent, scope }: { project: Project; agent: Agent
 
 function ProjectControl({ project }: { project: Project }) {
   const dispatch = useResearchDispatch();
-  const { controlPlane } = useResearchState();
-  const [tab, setTab] = useState<"map" | "registry">("map");
-  const agents = registeredAgents(project);
-  const active = agents.filter((agent) => agent.status === "running" || agent.status === "thinking");
+
+  function selectAgent(agent: Agent) {
+    if (!agent.sandboxName) return;
+    dispatch({
+      type: "select",
+      selection: { type: "agent", projectId: project.id, agentId: agent.id },
+    });
+  }
 
   return (
-    <PanelShell title="Research control" subtitle="Orchestrator">
-      <div className="panel-tabs">
-        <button className={tab === "map" ? "active" : ""} onClick={() => setTab("map")}><Network size={13} /> System map</button>
-        <button className={tab === "registry" ? "active" : ""} onClick={() => setTab("registry")}><Activity size={13} /> Registry</button>
-      </div>
-      {tab === "map" ? (
-          <div className="control-scroll">
-            <div className="system-metrics">
-              <div><span>Sandboxes</span><strong>{agents.length}</strong><small>Blaxel registry</small></div>
-              <div><span>Running</span><strong>{active.length}</strong><small>tmux sessions</small></div>
-              <div><span>Teams</span><strong>{project.teams.length}/{controlPlane.maxTeams ?? "—"}</strong><small>registered tracks</small></div>
-            </div>
-            {controlPlane.maxTeams !== undefined && project.teams.length >= controlPlane.maxTeams ? (
-              <div className="capacity-notice"><strong>Team cap reached</strong><span>Stop an unproductive team sandbox before asking the main orchestrator to create another track.</span></div>
-            ) : null}
-            <div className="topology-canvas topology-canvas-live">
-              <div className="canvas-grid" />
+    <PanelShell title="Organization" subtitle={project.shortName}>
+      <div className="org-chart-scroll">
+        <button
+          className="org-root-node"
+          onClick={() => selectAgent(project.orchestrator)}
+          disabled={!project.orchestrator.sandboxName}
+        >
+          <span className="org-node-icon"><Network size={16} /></span>
+          <span className="org-node-copy">
+            <strong>{project.orchestrator.name}</strong>
+            <small>Main orchestrator</small>
+          </span>
+          <StatusDot status={project.orchestrator.status} />
+          <ChevronRight size={13} />
+        </button>
+
+        <div className="org-trunk" />
+
+        <div className="org-team-list">
+          {project.teams.map((team) => (
+            <section className={`org-team-branch org-accent-${team.accent}`} key={team.id}>
               <button
-                className="orchestrator-node orchestrator-node-button"
-                onClick={() => project.orchestrator.sandboxName && dispatch({ type: "select", selection: { type: "agent", projectId: project.id, agentId: project.orchestrator.id } })}
-                disabled={!project.orchestrator.sandboxName}
+                className="org-team-node"
+                onClick={() => selectAgent(team.orchestrator)}
+                disabled={!team.orchestrator.sandboxName}
               >
-                <span className="node-ripple" /><div><Network size={18} /></div>
-                <strong>MAIN</strong><small>{project.orchestrator.sandboxName ? project.orchestrator.status : "not registered"}</small>
+                <span className="org-team-swatch" />
+                <span className="org-node-copy">
+                  <strong>{team.name}</strong>
+                  <small>Team orchestrator</small>
+                </span>
+                <StatusDot status={team.orchestrator.status} />
+                <ChevronRight size={13} />
               </button>
-              <div className="team-node-grid topology-team-list">
-                {project.teams.map((team) => {
-                  const running = [team.orchestrator, ...team.agents].filter((agent) => agent.status === "running" || agent.status === "thinking").length;
-                  return (
-                    <button
-                      key={team.id}
-                      className={`topology-team swatch-bg-${team.accent}`}
-                      onClick={() => team.orchestrator.sandboxName && dispatch({ type: "select", selection: { type: "agent", projectId: project.id, agentId: team.orchestrator.id } })}
-                      disabled={!team.orchestrator.sandboxName}
-                    >
-                      <span className="topology-team-index"><Workflow size={13} /></span>
-                      <span><strong>{team.name}</strong><small>{team.agents.length} implementers registered</small></span>
-                      <span className="topology-team-live"><StatusDot status={team.orchestrator.status} /> {running} running</span>
-                      <ChevronRight size={13} />
-                    </button>
-                  );
-                })}
-                {!project.teams.length ? (
-                  <div className="live-empty-state"><Workflow size={17} /><strong>No teams registered yet</strong><span>The main orchestrator creates team sandboxes through the Groktimizer MCP server.</span></div>
-                ) : null}
+              <div className="org-member-list">
+                {team.agents.map((agent) => (
+                  <button className="org-member-node" key={agent.id} onClick={() => selectAgent(agent)}>
+                    <span className="org-member-connector" />
+                    <StatusDot status={agent.status} />
+                    <span className="org-node-copy">
+                      <strong>{agent.name}</strong>
+                      <small>Implementer</small>
+                    </span>
+                    <ChevronRight size={12} />
+                  </button>
+                ))}
+                {!team.agents.length ? <p>No implementers registered</p> : null}
               </div>
+            </section>
+          ))}
+          {!project.teams.length ? (
+            <div className="org-empty-state">
+              <Workflow size={16} />
+              <strong>No teams registered</strong>
+              <span>Teams will appear here when the main orchestrator creates them.</span>
             </div>
-          </div>
-        ) : (
-          <div className="control-scroll registry-view">
-            <div className="subsection-title"><span><Radio size={12} /> Live Blaxel registry</span><small>{agents.length} sandboxes</small></div>
-            <div className="registry-list">
-              {agents.map((agent) => <RegistryRow key={agent.id} project={project} agent={agent} scope={agent.role} />)}
-              {!agents.length ? <div className="live-empty-state"><Radio size={17} /><strong>Registry is empty</strong><span>Launch a project to provision the main orchestrator.</span></div> : null}
-            </div>
-          </div>
-        )}
+          ) : null}
+        </div>
+
+        {project.implementor.sandboxName ? (
+          <>
+            <div className="org-trunk org-trunk-final" />
+            <button className="org-final-node" onClick={() => selectAgent(project.implementor)}>
+              <span className="org-node-icon"><Workflow size={15} /></span>
+              <span className="org-node-copy">
+                <strong>{project.implementor.name}</strong>
+                <small>Final reconciler</small>
+              </span>
+              <StatusDot status={project.implementor.status} />
+              <ChevronRight size={13} />
+            </button>
+          </>
+        ) : null}
+      </div>
     </PanelShell>
   );
 }

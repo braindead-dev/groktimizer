@@ -185,6 +185,11 @@ function normalizeLiveAgent(source: LiveAgentSnapshot, referenceTime: number): A
     elapsed: elapsedFromTimestamp(source.log_mtime, referenceTime),
     sandboxName: source.sandbox_name,
     branchName: source.branch,
+    runnerKind: source.runtime_id
+      ? "durable"
+      : source.ingest_error
+        ? "legacy"
+        : "unavailable",
   };
 }
 

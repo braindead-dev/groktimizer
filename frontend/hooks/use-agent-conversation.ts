@@ -173,8 +173,11 @@ export function conversationReducer(state: ConversationState, action: Action): C
   }
 
   if (event.type === "snapshot") {
-    const turns = applyTurns({}, event.data.turns);
-    const events = applyEvents({}, event.data.events);
+    const runtimeChanged = Boolean(
+      state.runtimeId && event.data.runtime_id && state.runtimeId !== event.data.runtime_id,
+    );
+    const turns = applyTurns(runtimeChanged ? {} : state.turns, event.data.turns);
+    const events = applyEvents(runtimeChanged ? {} : state.events, event.data.events);
     return {
       ...state,
       runtimeId: event.data.runtime_id,
@@ -316,7 +319,10 @@ export function useAgentConversation(sandbox?: string) {
   const busy = state.runtime.turnStatus === "running"
     || state.runtime.turnStatus === "interrupting"
     || turns.some((turn) => turn.status === "running" || turn.status === "interrupting");
-  const queued = turns.filter((turn) => turn.status === "queued").length;
+  const queued = Math.max(
+    state.runtime.queued,
+    turns.filter((turn) => turn.status === "queued").length,
+  );
   const activity = state.runtime.running === false
     ? "stopped"
     : busy
