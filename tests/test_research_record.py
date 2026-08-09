@@ -173,6 +173,22 @@ def test_reimport_preserves_and_rebases_live_history(tmp_path: Path):
     sandbox = "gtz-inference-runtime-kernel"
     with Store(tmp_path / "research.db") as store:
         record.install(store, installed_at=installed_at)
+        legacy_turn = {
+            "id": f"{sandbox}-turn-completed",
+            "client_id": "legacy-record-client",
+            "prompt": "Previous archive summary.",
+            "display_prompt": "Previous archive summary.",
+            "mode": "queue",
+            "sender_kind": "agent",
+            "sender_sandbox": "gtz-inference-hq-main",
+            "sender_label": "Orchestrator",
+            "status": "completed",
+            "created_at": installed_at.isoformat(),
+            "started_at": installed_at.isoformat(),
+            "finished_at": installed_at.isoformat(),
+            "error": None,
+            "revision": 1,
+        }
         operator_turn = {
             "id": "operator-follow-up",
             "client_id": "operator-follow-up-client",
@@ -189,26 +205,35 @@ def test_reimport_preserves_and_rebases_live_history(tmp_path: Path):
             "error": None,
             "revision": 1,
         }
-        store.upsert_turns(sandbox, [operator_turn])
+        store.upsert_turns(sandbox, [legacy_turn, operator_turn])
         store.insert_turn_events(
             sandbox,
             [
                 {
-                    "id": "operator-follow-up-answer",
+                    "id": "legacy-record-answer",
                     "seq": 23,
+                    "turn_id": legacy_turn["id"],
+                    "type": "assistant_text",
+                    "payload": {"text": "Previous archive result."},
+                    "at": installed_at.isoformat(),
+                },
+                {
+                    "id": "operator-follow-up-answer",
+                    "seq": 24,
                     "turn_id": "operator-follow-up",
                     "type": "assistant_text",
                     "payload": {"text": "The additional workload is queued."},
                     "at": installed_at.isoformat(),
-                }
+                },
             ],
         )
-        store.set_event_cursor(sandbox, 23)
+        store.set_event_cursor(sandbox, 24)
 
         record.install(store, installed_at=installed_at)
 
         history = store.conversation_for(sandbox)
         assert len(history["turns"]) == 7
+        assert all(turn["id"] != legacy_turn["id"] for turn in history["turns"])
         assert any(turn["id"] == "operator-follow-up" for turn in history["turns"])
         assert history["events"][-1]["id"] == "operator-follow-up-answer"
         assert [event["seq"] for event in history["events"]] == list(range(1, 24))

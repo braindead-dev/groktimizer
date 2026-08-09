@@ -425,14 +425,26 @@ class Store:
                 (runtime_id, sandbox),
             )
 
-    def prepare_record_history(self, sandbox: str, turn_prefix: str, event_count: int) -> int:
+    def prepare_record_history(
+        self,
+        sandbox: str,
+        turn_prefix: str,
+        event_count: int,
+        *,
+        legacy_turn_ids: tuple[str, ...] = (),
+    ) -> int:
         """Replace record-owned history while preserving and rebasing later live events."""
         prefix_length = len(turn_prefix)
-        preserved = self.db.execute(
-            "SELECT id FROM turn_events WHERE sandbox=?"
-            " AND substr(turn_id, 1, ?) != ? ORDER BY remote_seq, id",
-            (sandbox, prefix_length, turn_prefix),
-        ).fetchall()
+        legacy = set(legacy_turn_ids)
+        preserved = [
+            row
+            for row in self.db.execute(
+                "SELECT id, turn_id FROM turn_events WHERE sandbox=?"
+                " AND substr(turn_id, 1, ?) != ? ORDER BY remote_seq, id",
+                (sandbox, prefix_length, turn_prefix),
+            ).fetchall()
+            if row["turn_id"] not in legacy
+        ]
         with self.db:
             self.db.execute(
                 "DELETE FROM turn_events WHERE sandbox=? AND substr(turn_id, 1, ?)=?",
@@ -442,6 +454,17 @@ class Store:
                 "DELETE FROM turns WHERE sandbox=? AND substr(id, 1, ?)=?",
                 (sandbox, prefix_length, turn_prefix),
             )
+            if legacy_turn_ids:
+                placeholders = ",".join("?" for _ in legacy_turn_ids)
+                parameters = (sandbox, *legacy_turn_ids)
+                self.db.execute(
+                    f"DELETE FROM turn_events WHERE sandbox=? AND turn_id IN ({placeholders})",  # noqa: S608
+                    parameters,
+                )
+                self.db.execute(
+                    f"DELETE FROM turns WHERE sandbox=? AND id IN ({placeholders})",  # noqa: S608
+                    parameters,
+                )
             # Move preserved rows out of the positive sequence range first. Updating
             # directly can collide with another preserved row's current sequence.
             for temporary, row in enumerate(preserved, start=1):

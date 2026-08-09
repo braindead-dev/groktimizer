@@ -349,8 +349,20 @@ def _install_project(
         turns, events, runtime = _turns_and_events(project, team, agent, history_base)
         turn_prefix = f"{sandbox}-record-"
         existing = store.conversation_for(sandbox)
-        has_live_history = any(not turn["id"].startswith(turn_prefix) for turn in existing["turns"])
-        cursor = store.prepare_record_history(sandbox, turn_prefix, len(events))
+        legacy_turn_ids = (
+            f"{sandbox}-turn-completed",
+            f"{sandbox}-turn-active",
+        )
+        has_live_history = any(
+            not turn["id"].startswith(turn_prefix) and turn["id"] not in legacy_turn_ids
+            for turn in existing["turns"]
+        )
+        cursor = store.prepare_record_history(
+            sandbox,
+            turn_prefix,
+            len(events),
+            legacy_turn_ids=legacy_turn_ids,
+        )
         store.upsert_turns(sandbox, turns)
         store.insert_turn_events(sandbox, events)
         runtime["cursor"] = cursor
