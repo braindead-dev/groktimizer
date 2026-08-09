@@ -414,18 +414,21 @@ button:disabled {
 }
 
 .project-delete-button {
+  position: absolute;
+  z-index: 1;
+  top: 3px;
+  right: 22px;
   width: 25px;
   height: 25px;
   display: grid;
-  flex: 0 0 auto;
   place-items: center;
-  margin-right: 3px;
   border-radius: 6px;
   color: var(--muted-light);
   opacity: 0;
+  pointer-events: none;
 }
 .project-row:hover .project-delete-button,
-.project-delete-button:focus-visible { opacity: 1; }
+.project-delete-button:focus-visible { opacity: 1; pointer-events: auto; }
 .project-delete-button:hover { color: #fca5a5; background: rgba(239, 68, 68, .09); }
 
 .tree-label {
