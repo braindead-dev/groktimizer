@@ -24,6 +24,21 @@ def _runtime_config_env(cfg: Config) -> str:
     )
 
 
+def _quiesce_runner() -> str:
+    """Stop the daemon and any detached Grok child before a runtime replacement."""
+    return (
+        f"python3 {RUNNER} shutdown >/dev/null 2>&1 || true; "
+        "for attempt in 1 2 3 4 5 6 7 8 9 10; do "
+        "tmux has-session -t gtz 2>/dev/null || break; sleep 0.2; done; "
+        "tmux kill-session -t gtz 2>/dev/null || true; "
+        "for signal in TERM KILL; do "
+        "for proc_dir in /proc/[0-9]*; do "
+        "test \"$(cat \"$proc_dir/comm\" 2>/dev/null)\" = grok || continue; "
+        "kill -$signal \"${proc_dir##*/}\" 2>/dev/null || true; "
+        "done; sleep 0.2; done; "
+    )
+
+
 def _last_json(stdout: str) -> dict | None:
     for line in reversed(stdout.splitlines()):
         try:
@@ -227,8 +242,7 @@ async def repair_runtime(client: SandboxClient, name: str, cfg: Config | None = 
                 "Research brief",
             ]
         )
-        start = (
-            "tmux kill-session -t gtz 2>/dev/null || true; "
+        start = _quiesce_runner() + (
             f"touch {RUNNER_LOG}; "
             "tmux new-session -d -s gtz "
             + shlex.quote(
@@ -266,8 +280,7 @@ async def repair_runtime(client: SandboxClient, name: str, cfg: Config | None = 
     await client.write_file(name, RUNNER, source)
     session_id = str(runtime["session_id"])
     init = shlex.join(["python3", RUNNER, "init", "--session-id", session_id, "--started"])
-    start = (
-        "tmux kill-session -t gtz 2>/dev/null || true; "
+    start = _quiesce_runner() + (
         f"if [ -s {RUNNER_LOG} ]; then mv {RUNNER_LOG} {RUNNER_LOG}.previous; fi; "
         f"touch {RUNNER_LOG}; : > {RUNNER_LOG}; "
         "tmux new-session -d -s gtz "

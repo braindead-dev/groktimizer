@@ -238,6 +238,40 @@ def interrupt_active_turn() -> dict[str, Any]:
         return {"interrupted": True, "turn_id": turn_id}
 
 
+def request_shutdown() -> dict[str, Any]:
+    """Ask the daemon to stop after safely cancelling its active child process."""
+    with connect() as db:
+        set_meta(db, "shutdown_requested", "1")
+        active = db.execute(
+            "SELECT id FROM turns WHERE status IN ('running','interrupting') "
+            "ORDER BY started_at DESC LIMIT 1"
+        ).fetchone()
+        if not active:
+            return {"shutdown": True, "turn_id": None}
+        turn_id = str(active["id"])
+        completed = db.execute(
+            "SELECT 1 FROM events WHERE turn_id=? AND type='turn_completed' LIMIT 1",
+            (turn_id,),
+        ).fetchone()
+        if completed:
+            db.execute(
+                "UPDATE turns SET status='completed', finished_at=?, error=NULL WHERE id=?",
+                (now(), turn_id),
+            )
+            append_event(
+                db,
+                turn_id,
+                "turn_status",
+                {"status": "completed", "recovered": True},
+            )
+            set_meta(db, "active_turn_id", "")
+            return {"shutdown": True, "turn_id": turn_id}
+        db.execute("UPDATE turns SET status='interrupting' WHERE id=?", (turn_id,))
+        append_event(db, turn_id, "turn_status", {"status": "interrupting"})
+        set_meta(db, "interrupt_requested", f"runner-shutdown-{uuid4().hex}")
+        return {"shutdown": True, "turn_id": turn_id}
+
+
 def runtime_snapshot(after: int = 0) -> dict[str, Any]:
     with connect() as db:
         events = [
@@ -396,7 +430,11 @@ def grok_command(db: sqlite3.Connection, prompt: str) -> list[str]:
     return command
 
 
-async def pump_output(proc: asyncio.subprocess.Process, turn_id: str) -> dict[str, bool]:
+async def pump_output(
+    proc: asyncio.subprocess.Process,
+    turn_id: str,
+    completion: asyncio.Event | None = None,
+) -> dict[str, bool]:
     result = {"completed": False, "saw_session": False}
     if proc.stdout is None:
         raise RuntimeError("Grok process stdout was not captured")
@@ -427,6 +465,8 @@ async def pump_output(proc: asyncio.subprocess.Process, turn_id: str) -> dict[st
                 )
             if event_type == "turn_completed":
                 result["completed"] = True
+                if completion is not None:
+                    completion.set()
 
     buffer = bytearray()
     while chunk := await proc.stdout.read(STREAM_CHUNK_SIZE):
@@ -483,13 +523,18 @@ async def pump_updates_file(
     offset: int,
     turn_id: str,
     stop: asyncio.Event,
+    completion: asyncio.Event | None = None,
 ) -> dict[str, bool]:
     result = {"completed": False, "saw_session": False}
     while not stop.is_set():
         offset, fresh = consume_update_lines(path, offset, turn_id)
         result = {key: result[key] or fresh[key] for key in result}
+        if fresh["completed"] and completion is not None:
+            completion.set()
         await asyncio.sleep(0.1)
     offset, fresh = consume_update_lines(path, offset, turn_id)
+    if fresh["completed"] and completion is not None:
+        completion.set()
     return {key: result[key] or fresh[key] for key in result}
 
 
@@ -548,13 +593,24 @@ async def run_turn(turn: sqlite3.Row) -> None:
             append_event(db, turn_id, "turn_status", {"status": "failed", "error": message})
             set_meta(db, "active_turn_id", "")
         return
-    output_task = asyncio.create_task(pump_output(proc, turn_id))
+    completion = asyncio.Event()
+    output_task = asyncio.create_task(pump_output(proc, turn_id, completion))
     update_stop = asyncio.Event()
-    updates_task = asyncio.create_task(pump_updates_file(path, update_offset, turn_id, update_stop))
+    updates_task = asyncio.create_task(
+        pump_updates_file(path, update_offset, turn_id, update_stop, completion)
+    )
     interrupted = False
     operator_stop = False
+    completed = False
     while proc.returncode is None:
         await asyncio.sleep(0.2)
+        if completion.is_set():
+            completed = True
+            try:
+                await asyncio.wait_for(proc.wait(), timeout=1.0)
+            except TimeoutError:
+                pass
+            break
         with connect() as db:
             requested = get_meta(db, "interrupt_requested")
             if requested and requested != turn_id:
@@ -564,7 +620,7 @@ async def run_turn(turn: sqlite3.Row) -> None:
                 append_event(db, turn_id, "turn_status", {"status": "interrupting"})
                 set_meta(db, "interrupt_requested", "")
                 break
-    if interrupted:
+    if interrupted or completed:
         await terminate_process(proc)
     else:
         await proc.wait()
@@ -583,7 +639,12 @@ async def run_turn(turn: sqlite3.Row) -> None:
                 if operator_stop
                 else "Interrupted by a newer steering message"
             )
-        elif proc.returncode == 0 or output_result["completed"] or updates_result["completed"]:
+        elif (
+            completed
+            or proc.returncode == 0
+            or output_result["completed"]
+            or updates_result["completed"]
+        ):
             status = "completed"
             error = None
         else:
@@ -599,28 +660,60 @@ async def run_turn(turn: sqlite3.Row) -> None:
 
 def recover_stale_turns() -> int:
     with connect() as db:
+        maintenance = get_meta(db, "shutdown_requested") == "1"
         stale = db.execute(
             "SELECT id FROM turns WHERE status IN ('running','interrupting')"
         ).fetchall()
         for row in stale:
-            db.execute(
-                "UPDATE turns SET status='failed', finished_at=?, error=? WHERE id=?",
-                (now(), "Runner restarted during the turn", row["id"]),
-            )
-            append_event(
-                db,
-                row["id"],
-                "turn_status",
-                {"status": "failed", "error": "Runner restarted during the turn"},
-            )
+            completed = db.execute(
+                "SELECT 1 FROM events WHERE turn_id=? AND type='turn_completed' LIMIT 1",
+                (row["id"],),
+            ).fetchone()
+            if completed:
+                db.execute(
+                    "UPDATE turns SET status='completed', finished_at=?, error=NULL WHERE id=?",
+                    (now(), row["id"]),
+                )
+                append_event(
+                    db,
+                    row["id"],
+                    "turn_status",
+                    {"status": "completed", "recovered": True},
+                )
+            elif maintenance:
+                db.execute(
+                    "UPDATE turns SET status='queued', started_at=NULL, error=NULL WHERE id=?",
+                    (row["id"],),
+                )
+                append_event(
+                    db,
+                    row["id"],
+                    "turn_status",
+                    {"status": "queued", "maintenance_retry": True},
+                )
+            else:
+                db.execute(
+                    "UPDATE turns SET status='failed', finished_at=?, error=? WHERE id=?",
+                    (now(), "Runner restarted during the turn", row["id"]),
+                )
+                append_event(
+                    db,
+                    row["id"],
+                    "turn_status",
+                    {"status": "failed", "error": "Runner restarted during the turn"},
+                )
         set_meta(db, "runner_started_at", now())
         return len(stale)
 
 
 async def daemon() -> None:
     recover_stale_turns()
+    with connect() as db:
+        set_meta(db, "shutdown_requested", "")
     while True:
         with connect() as db:
+            if get_meta(db, "shutdown_requested") == "1":
+                break
             turn = db.execute(
                 "SELECT * FROM turns WHERE status='queued' "
                 "ORDER BY priority, created_at, id LIMIT 1"
@@ -673,6 +766,7 @@ def parse_args() -> argparse.Namespace:
     export.add_argument("--after", type=int, default=0)
     sub.add_parser("status")
     sub.add_parser("interrupt")
+    sub.add_parser("shutdown")
     sub.add_parser("daemon")
     return parser.parse_args()
 
@@ -706,6 +800,8 @@ def main() -> None:
             result.pop("turns", None)
     elif args.command == "interrupt":
         result = interrupt_active_turn()
+    elif args.command == "shutdown":
+        result = request_shutdown()
     elif args.command == "daemon":
         try:
             asyncio.run(daemon())

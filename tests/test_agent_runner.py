@@ -176,6 +176,50 @@ def test_interrupt_stops_active_turn_without_queuing_another(monkeypatch, tmp_pa
     assert snapshot["queued"] == 0
 
 
+def test_shutdown_interrupts_active_turn_and_marks_maintenance(monkeypatch, tmp_path):
+    use_temp_db(monkeypatch, tmp_path)
+    agent_runner.init_runtime("session-1", started=True)
+    agent_runner.enqueue_turn(
+        prompt="work",
+        display_prompt="work",
+        client_id="client-1",
+        turn_id="turn-1",
+        mode="queue",
+        sender_kind="operator",
+        sender_sandbox=None,
+        sender_label=None,
+    )
+    with agent_runner.connect() as db:
+        db.execute("UPDATE turns SET status='running' WHERE id='turn-1'")
+    assert agent_runner.request_shutdown() == {"shutdown": True, "turn_id": "turn-1"}
+    with agent_runner.connect() as db:
+        assert agent_runner.get_meta(db, "shutdown_requested") == "1"
+    assert agent_runner.runtime_snapshot()["turns"][0]["status"] == "interrupting"
+
+
+def test_shutdown_recovers_completed_event_before_stopping(monkeypatch, tmp_path):
+    use_temp_db(monkeypatch, tmp_path)
+    agent_runner.init_runtime("session-1", started=True)
+    agent_runner.enqueue_turn(
+        prompt="work",
+        display_prompt="work",
+        client_id="client-1",
+        turn_id="turn-1",
+        mode="queue",
+        sender_kind="operator",
+        sender_sandbox=None,
+        sender_label=None,
+    )
+    with agent_runner.connect() as db:
+        db.execute("UPDATE turns SET status='running' WHERE id='turn-1'")
+        agent_runner.set_meta(db, "active_turn_id", "turn-1")
+        agent_runner.append_event(db, "turn-1", "turn_completed", {"stopReason": "end_turn"})
+    agent_runner.request_shutdown()
+    snapshot = agent_runner.runtime_snapshot()
+    assert snapshot["turns"][0]["status"] == "completed"
+    assert snapshot["active_turn_id"] is None
+
+
 async def test_grok_stream_reader_accepts_large_structured_events(monkeypatch, tmp_path):
     use_temp_db(monkeypatch, tmp_path)
     agent_runner.init_runtime("session-1", started=True)
@@ -212,6 +256,51 @@ async def test_grok_stream_reader_accepts_large_structured_events(monkeypatch, t
     payload = snapshot["events"][-1]["payload"]
     assert payload["truncated"] is True
     assert payload["preview"]
+
+
+async def test_stream_completion_signals_process_exit(monkeypatch, tmp_path):
+    use_temp_db(monkeypatch, tmp_path)
+    agent_runner.init_runtime("session-1", started=True)
+    event = {
+        "method": "session/update",
+        "params": {"update": {"sessionUpdate": "turn_completed", "stop_reason": "end_turn"}},
+    }
+    stream = asyncio.StreamReader()
+    stream.feed_data(json.dumps(event).encode() + b"\n")
+    stream.feed_eof()
+
+    class Process:
+        stdout = stream
+
+    completion = asyncio.Event()
+    result = await agent_runner.pump_output(Process(), "turn-1", completion)
+    assert result["completed"] is True
+    assert completion.is_set()
+
+
+def test_maintenance_recovery_completes_finished_turn_and_requeues_inflight(
+    monkeypatch, tmp_path
+):
+    use_temp_db(monkeypatch, tmp_path)
+    agent_runner.init_runtime("session-1", started=True)
+    for index in (1, 2):
+        agent_runner.enqueue_turn(
+            prompt=f"work {index}",
+            display_prompt=f"work {index}",
+            client_id=f"client-{index}",
+            turn_id=f"turn-{index}",
+            mode="queue",
+            sender_kind="operator",
+            sender_sandbox=None,
+            sender_label=None,
+        )
+    with agent_runner.connect() as db:
+        db.execute("UPDATE turns SET status='running'")
+        agent_runner.append_event(db, "turn-1", "turn_completed", {"stopReason": "end_turn"})
+        agent_runner.set_meta(db, "shutdown_requested", "1")
+    assert agent_runner.recover_stale_turns() == 2
+    statuses = {turn["id"]: turn["status"] for turn in agent_runner.runtime_snapshot()["turns"]}
+    assert statuses == {"turn-1": "completed", "turn-2": "queued"}
 
 
 def test_runtime_id_is_stable_and_failed_turn_can_be_requeued(monkeypatch, tmp_path):

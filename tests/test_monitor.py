@@ -206,6 +206,8 @@ async def test_repair_restarts_current_runtime_without_session_discovery():
         "reinitialized": False,
     }
     assert any("--session-id session-1 --started" in command for _, command in client.execs)
+    assert any("agent_runner.py shutdown" in command for _, command in client.execs)
+    assert any("/proc/[0-9]*" in command for _, command in client.execs)
     assert not any(".grok/sessions" in command for _, command in client.execs)
 
 
