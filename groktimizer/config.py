@@ -5,6 +5,8 @@ from pathlib import Path
 
 from pydantic import BaseModel
 
+DEFAULT_GPU_TYPE = "NVIDIA RTX PRO 6000 Blackwell Server Edition"
+
 
 class Caps(BaseModel):
     max_teams: int = 5
@@ -14,7 +16,7 @@ class Caps(BaseModel):
 class Budget(BaseModel):
     spend_ceiling_usd: float = 25.0
     max_concurrent_pods: int = 2
-    allowed_gpu_types: list[str] = ["NVIDIA GeForce RTX 4090"]
+    allowed_gpu_types: list[str] = [DEFAULT_GPU_TYPE]
     max_pod_lifetime_hours: float = 2.0
 
 

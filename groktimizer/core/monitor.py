@@ -1,5 +1,6 @@
 """Observe and steer a subordinate agent through its sandbox exec channel."""
 
+import hashlib
 import json
 import shlex
 from pathlib import Path
@@ -10,6 +11,17 @@ from groktimizer.core.sandbox import SandboxClient
 
 RUNNER = "/opt/gtz/agent_runner.py"
 RUNNER_LOG = "/var/log/gtz/runner.log"
+
+
+def _runtime_config_env(cfg: Config) -> str:
+    return "".join(
+        f"export {key}={shlex.quote(value)}\n"
+        for key, value in {
+            "GTZ_CONFIG_JSON": cfg.model_dump_json(),
+            "GTZ_TOOLING_REPO": cfg.tooling_repo,
+            "GTZ_SHARED_REPO": cfg.shared_repo,
+        }.items()
+    )
 
 
 def _last_json(stdout: str) -> dict | None:
@@ -27,15 +39,19 @@ async def agent_status(client: SandboxClient, name: str) -> dict:
     r = await client.exec(
         name,
         f"tmux has-session -t gtz 2>/dev/null && echo running; "
+        "test -f /opt/gtz/provisioning && echo provisioning; "
+        "pgrep -f '[b]ash /opt/gtz/setup.sh' >/dev/null && echo provisioning; "
         f"python3 {RUNNER} status 2>/dev/null || true; "
         f"stat -c %Y {RUNNER_LOG} 2>/dev/null",
     )
     lines = r.stdout.split()
     running = "running" in lines
+    provisioning = "provisioning" in lines
     mtimes = [tok for tok in lines if tok.isdigit()]
     runtime = _last_json(r.stdout) or {}
     return {
         "running": running,
+        "provisioning": provisioning,
         "log_mtime": int(mtimes[-1]) if mtimes else None,
         "turn_status": runtime.get("turn_status", "idle" if running else "stopped"),
         "active_turn_id": runtime.get("active_turn_id"),
@@ -107,6 +123,7 @@ async def send_message(
         "tmux new-session -d -s gtz "
         + shlex.quote(
             "{ . /opt/gtz/.env; } 2>/dev/null; "
+            "{ . /opt/gtz/config.env; } 2>/dev/null; "
             'export PATH="$HOME/.local/bin:$HOME/.grok/bin:$PATH"; '
             "export GIT_ASKPASS=/opt/gtz/git-askpass.sh GIT_TERMINAL_PROMPT=0; "
             "cd /workspace/project; "
@@ -120,9 +137,46 @@ async def send_message(
     return result
 
 
+async def interrupt_turn(client: SandboxClient, name: str) -> dict:
+    """Stop the active generation without adding a replacement turn."""
+    r = await client.exec(name, f"python3 {RUNNER} interrupt 2>/dev/null || true")
+    result = _last_json(r.stdout)
+    if r.exit_code != 0 or not result:
+        raise RuntimeError("agent turn runner is unavailable; repair the sandbox first")
+    return result
+
+
+async def ensure_runtime_current(client: SandboxClient, name: str, cfg: Config) -> bool:
+    """Refresh a durable runner only when its code or live config is stale."""
+    runner_source = Path(__file__).with_name("agent_runner.py").read_text()
+    config_env = _runtime_config_env(cfg)
+    expected = {
+        hashlib.sha256(runner_source.encode()).hexdigest(),
+        hashlib.sha256(config_env.encode()).hexdigest(),
+    }
+    probe = await client.exec(
+        name,
+        f"sha256sum {RUNNER} /opt/gtz/config.env 2>/dev/null | cut -d' ' -f1",
+    )
+    actual = set(probe.stdout.split())
+    if expected.issubset(actual):
+        return False
+    runtime = await runtime_snapshot(client, name)
+    if not runtime or not runtime.get("runtime_id"):
+        return False
+    if runtime.get("turn_status") in {"running", "interrupting"}:
+        return False
+    await repair_runtime(client, name, cfg)
+    return True
+
+
 async def repair_runtime(client: SandboxClient, name: str, cfg: Config | None = None) -> dict:
     """Restart a current queued runner while preserving its recorded Grok session."""
     runtime = await runtime_snapshot(client, name)
+    if cfg is not None:
+        config_env = _runtime_config_env(cfg)
+        await client.write_file(name, "/opt/gtz/config.env", config_env)
+        await client.exec(name, "chmod 600 /opt/gtz/config.env")
     if not runtime or not runtime.get("runtime_id") or not runtime.get("session_id"):
         if cfg is None:
             raise RuntimeError("unsupported agent runner; bootstrap repair is required")
@@ -179,6 +233,7 @@ async def repair_runtime(client: SandboxClient, name: str, cfg: Config | None = 
             "tmux new-session -d -s gtz "
             + shlex.quote(
                 "{ . /opt/gtz/.env; } 2>/dev/null; "
+                "{ . /opt/gtz/config.env; } 2>/dev/null; "
                 'export PATH="$HOME/.local/bin:$HOME/.grok/bin:$PATH"; '
                 "export GIT_ASKPASS=/opt/gtz/git-askpass.sh GIT_TERMINAL_PROMPT=0; "
                 "cd /workspace/project; "
@@ -188,6 +243,7 @@ async def repair_runtime(client: SandboxClient, name: str, cfg: Config | None = 
         repaired = await client.exec(
             name,
             f"{exports} {{ . /opt/gtz/.env; }} 2>/dev/null; "
+            "{ . /opt/gtz/config.env; } 2>/dev/null; "
             'export PATH="$HOME/.local/bin:$HOME/.grok/bin:$PATH"; '
             f"chmod 700 {RUNNER}; pip install --quiet \"git+${{GTZ_TOOLING_REPO}}\"; "
             "grok mcp remove groktimizer >/dev/null 2>&1 || true; "
@@ -217,13 +273,22 @@ async def repair_runtime(client: SandboxClient, name: str, cfg: Config | None = 
         "tmux new-session -d -s gtz "
         + shlex.quote(
             "{ . /opt/gtz/.env; } 2>/dev/null; "
+            "{ . /opt/gtz/config.env; } 2>/dev/null; "
             'export PATH="$HOME/.local/bin:$HOME/.grok/bin:$PATH"; '
             "export GIT_ASKPASS=/opt/gtz/git-askpass.sh GIT_TERMINAL_PROMPT=0; "
             "cd /workspace/project; "
             f"exec python3 {RUNNER} daemon >>{RUNNER_LOG} 2>&1"
         )
     )
-    r = await client.exec(name, f"chmod 700 {RUNNER}; {init}; {start}")
+    refresh = (
+        "{ . /opt/gtz/.env; } 2>/dev/null; "
+        "{ . /opt/gtz/config.env; } 2>/dev/null; "
+        'export PATH="$HOME/.local/bin:$HOME/.grok/bin:$PATH"; '
+        'pip install --quiet "git+${GTZ_TOOLING_REPO}"; '
+        "grok mcp remove groktimizer >/dev/null 2>&1 || true; "
+        "grok mcp add groktimizer -- python3 -m groktimizer.mcp; "
+    )
+    r = await client.exec(name, f"{refresh} chmod 700 {RUNNER}; {init}; {start}", timeout_s=900)
     if r.exit_code != 0:
         raise RuntimeError("failed to repair the agent turn runner")
     return {"repaired": True, "session_id": session_id, "reinitialized": False}

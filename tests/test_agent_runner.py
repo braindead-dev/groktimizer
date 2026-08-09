@@ -1,3 +1,6 @@
+import asyncio
+import json
+
 from groktimizer.core import agent_runner
 
 
@@ -146,6 +149,69 @@ def test_restart_marks_inflight_turn_failed(monkeypatch, tmp_path):
     snapshot = agent_runner.runtime_snapshot()
     assert snapshot["turns"][0]["status"] == "failed"
     assert snapshot["turns"][0]["error"] == "Runner restarted during the turn"
+
+
+def test_interrupt_stops_active_turn_without_queuing_another(monkeypatch, tmp_path):
+    use_temp_db(monkeypatch, tmp_path)
+    agent_runner.init_runtime("session-1", started=True)
+    agent_runner.enqueue_turn(
+        prompt="work",
+        display_prompt="work",
+        client_id="client-1",
+        turn_id="turn-1",
+        mode="queue",
+        sender_kind="operator",
+        sender_sandbox=None,
+        sender_label=None,
+    )
+    with agent_runner.connect() as db:
+        db.execute(
+            "UPDATE turns SET status='running', started_at=? WHERE id='turn-1'",
+            (agent_runner.now(),),
+        )
+    result = agent_runner.interrupt_active_turn()
+    assert result == {"interrupted": True, "turn_id": "turn-1"}
+    snapshot = agent_runner.runtime_snapshot()
+    assert snapshot["turns"][0]["status"] == "interrupting"
+    assert snapshot["queued"] == 0
+
+
+async def test_grok_stream_reader_accepts_large_structured_events(monkeypatch, tmp_path):
+    use_temp_db(monkeypatch, tmp_path)
+    agent_runner.init_runtime("session-1", started=True)
+    agent_runner.enqueue_turn(
+        prompt="work",
+        display_prompt="work",
+        client_id="client-1",
+        turn_id="turn-1",
+        mode="queue",
+        sender_kind="operator",
+        sender_sandbox=None,
+        sender_label=None,
+    )
+    event = {
+        "method": "session/update",
+        "params": {
+            "update": {
+                "sessionUpdate": "tool_call_update",
+                "toolCallId": "call-1",
+                "status": "completed",
+                "rawOutput": {"output": "x" * (agent_runner.MAX_EVENT_TEXT * 2)},
+            }
+        },
+    }
+    stream = asyncio.StreamReader()
+    stream.feed_data(json.dumps(event).encode() + b"\n")
+    stream.feed_eof()
+
+    class Process:
+        stdout = stream
+
+    await agent_runner.pump_output(Process(), "turn-1")
+    snapshot = agent_runner.runtime_snapshot()
+    payload = snapshot["events"][-1]["payload"]
+    assert payload["truncated"] is True
+    assert payload["preview"]
 
 
 def test_runtime_id_is_stable_and_failed_turn_can_be_requeued(monkeypatch, tmp_path):

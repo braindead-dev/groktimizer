@@ -39,6 +39,29 @@ def test_agent_lifecycle(store):
     assert store.list_agents("demo")[0]["terminated_at"] is not None
 
 
+def test_delete_project_removes_agents_and_conversations(store):
+    store.upsert_project("demo", objective="Make it fast")
+    store.upsert_agent("sb", project="demo", team="attn", name="impl1", role="implementer")
+    store.upsert_turns("sb", [turn()])
+    store.insert_turn_events(
+        "sb",
+        [
+            {
+                "id": "event-1",
+                "seq": 1,
+                "turn_id": "turn-1",
+                "type": "assistant_text",
+                "payload": {"text": "done"},
+                "at": "2026-01-01T00:00:01",
+            }
+        ],
+    )
+    store.delete_project("demo")
+    assert store.list_projects() == []
+    assert store.list_agents("demo") == []
+    assert store.conversation_for("sb")["turns"] == []
+
+
 def turn(status="queued"):
     return {
         "id": "turn-1",

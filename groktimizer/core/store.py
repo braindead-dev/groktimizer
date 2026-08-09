@@ -197,6 +197,22 @@ class Store:
                 (_now(), _now(), name),
             )
 
+    def delete_project(self, name: str) -> None:
+        """Remove a project and its persisted agent conversation state."""
+        with self.db:
+            self.db.execute(
+                "DELETE FROM turn_events WHERE sandbox IN "
+                "(SELECT sandbox FROM agents WHERE project=?)",
+                (name,),
+            )
+            self.db.execute(
+                "DELETE FROM turns WHERE sandbox IN "
+                "(SELECT sandbox FROM agents WHERE project=?)",
+                (name,),
+            )
+            self.db.execute("DELETE FROM agents WHERE project=?", (name,))
+            self.db.execute("DELETE FROM projects WHERE name=?", (name,))
+
     def list_projects(self) -> list[dict]:
         rows = self.db.execute("SELECT * FROM projects ORDER BY created_at").fetchall()
         return [dict(r) for r in rows]

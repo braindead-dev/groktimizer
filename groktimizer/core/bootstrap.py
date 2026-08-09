@@ -28,8 +28,10 @@ from groktimizer.prompts import render_brief
 # `set -x` can't echo them into exec output or the session log.
 SETUP_SH = """#!/usr/bin/env bash
 set -euo pipefail
+trap 'rm -f /opt/gtz/provisioning' EXIT
 { set +x; } 2>/dev/null
 [ -f /opt/gtz/.env ] && . /opt/gtz/.env
+[ -f /opt/gtz/config.env ] && . /opt/gtz/config.env
 set -x
 export DEBIAN_FRONTEND=noninteractive
 export PATH="$HOME/.local/bin:$HOME/.grok/bin:$PATH"
@@ -91,7 +93,8 @@ python3 /opt/gtz/agent_runner.py enqueue \\
   --sender-label "Research brief"
 tmux kill-session -t gtz 2>/dev/null || true
 tmux new-session -d -s gtz \\
-  '{ . /opt/gtz/.env; } 2>/dev/null; export PATH="$HOME/.local/bin:$HOME/.grok/bin:$PATH"; \\
+  '{ . /opt/gtz/.env; } 2>/dev/null; { . /opt/gtz/config.env; } 2>/dev/null; \\
+   export PATH="$HOME/.local/bin:$HOME/.grok/bin:$PATH"; \\
    export GIT_ASKPASS=/opt/gtz/git-askpass.sh GIT_TERMINAL_PROMPT=0; \\
    cd /workspace/project; \\
    exec python3 /opt/gtz/agent_runner.py daemon >>/var/log/gtz/runner.log 2>&1'
@@ -204,14 +207,25 @@ async def spawn_agent(
         envs["GTZ_REASONING_EFFORT"] = cfg.research.reasoning_effort
     await client.create(name, cfg.image, cfg.region, labels=labels, envs=envs)
     rendered = render_brief(role, cfg, team=team, agent=agent, brief=brief)
-    await client.exec(name, "mkdir -p /opt/gtz")
+    await client.exec(name, "mkdir -p /opt/gtz; touch /opt/gtz/provisioning")
     await client.write_file(name, "/opt/gtz/brief.md", rendered)
     await client.write_file(name, "/opt/gtz/objective.md", brief)
     runner_source = Path(__file__).with_name("agent_runner.py").read_text()
     await client.write_file(name, "/opt/gtz/agent_runner.py", runner_source)
     secrets = prepare_agent_secrets(source_secrets, name, role, slot=slot)
     await client.write_file(name, "/opt/gtz/.env", render_env_file(secrets))
-    await client.exec(name, "chmod 600 /opt/gtz/.env")
+    await client.write_file(
+        name,
+        "/opt/gtz/config.env",
+        render_env_file(
+            {
+                "GTZ_CONFIG_JSON": cfg.model_dump_json(),
+                "GTZ_TOOLING_REPO": cfg.tooling_repo,
+                "GTZ_SHARED_REPO": cfg.shared_repo,
+            }
+        ),
+    )
+    await client.exec(name, "chmod 600 /opt/gtz/.env /opt/gtz/config.env")
     await client.write_file(name, "/opt/gtz/setup.sh", SETUP_SH)
     await client.exec(name, "bash /opt/gtz/setup.sh", timeout_s=900)
     return name

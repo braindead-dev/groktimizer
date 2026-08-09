@@ -136,6 +136,7 @@ async def collect_snapshot(cfg: Config, client, store: Store | None = None) -> d
                 "sandbox_name": agent.sandbox_name,
                 "branch": branch_name(agent.team, agent.agent, agent.role),
                 "running": bool(status.get("running")),
+                "provisioning": bool(status.get("provisioning")),
                 "log_mtime": status.get("log_mtime"),
                 "turn_status": status.get("turn_status", "idle"),
                 "active_turn_id": status.get("active_turn_id"),
@@ -350,16 +351,20 @@ def send(
     """Queue a steering message, or interrupt the active turn explicitly."""
     cfg = _cfg()
     _require_project_sandbox(cfg, sandbox)
-    result = asyncio.run(
-        monitor.send_message(
-            _client(cfg),
+    client = _client(cfg)
+
+    async def _send():
+        await monitor.ensure_runtime_current(client, sandbox, cfg)
+        return await monitor.send_message(
+            client,
             sandbox,
             message,
             mode="interrupt" if interrupt else "queue",
             client_id=client_id,
             retry=retry,
         )
-    )
+
+    result = asyncio.run(_send())
     typer.echo(
         json.dumps(
             {
@@ -380,6 +385,15 @@ def repair_chat(sandbox: str):
     cfg = _cfg()
     _require_project_sandbox(cfg, sandbox)
     result = asyncio.run(monitor.repair_runtime(_client(cfg), sandbox, cfg))
+    typer.echo(json.dumps(result, separators=(",", ":")))
+
+
+@app.command("interrupt-chat")
+def interrupt_chat(sandbox: str):
+    """Stop the active agent turn without queuing another message."""
+    cfg = _cfg()
+    _require_project_sandbox(cfg, sandbox)
+    result = asyncio.run(monitor.interrupt_turn(_client(cfg), sandbox))
     typer.echo(json.dumps(result, separators=(",", ":")))
 
 
@@ -434,6 +448,36 @@ def stop(project: str | None = typer.Option(None, "--project")):
         deleted = asyncio.run(_stop(store))
     swept = _sweep_project_pods(f"gtz-{cfg.project}-")
     typer.echo(f"deleted {deleted} sandboxes; terminated {len(swept)} runpod pods")
+
+
+@app.command("delete")
+def delete_project(project: str):
+    """Delete a project, its sandboxes, GPU pods, and persisted control-plane state."""
+    cfg = _cfg().model_copy(update={"project": project})
+    client = _client(cfg)
+
+    async def _delete(store: Store):
+        agents = await Registry(client, cfg.project).list_agents()
+        for agent in agents:
+            await ingest_agent(store, client, agent)
+            await client.delete(agent.sandbox_name)
+        store.delete_project(cfg.project)
+        return len(agents)
+
+    with Store() as store:
+        deleted = asyncio.run(_delete(store))
+    swept = _sweep_project_pods(f"gtz-{cfg.project}-")
+    typer.echo(
+        json.dumps(
+            {
+                "deleted": True,
+                "project": cfg.project,
+                "sandboxes": deleted,
+                "pods_terminated": len(swept),
+            },
+            separators=(",", ":"),
+        )
+    )
 
 
 @app.command()

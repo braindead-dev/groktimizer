@@ -5,6 +5,8 @@ import pytest
 from groktimizer.config import Config
 from groktimizer.core.monitor import (
     agent_status,
+    ensure_runtime_current,
+    interrupt_turn,
     repair_runtime,
     runtime_snapshot,
     send_message,
@@ -14,6 +16,14 @@ from groktimizer.core.sandbox import ExecResult
 from tests.fakes import FakeSandboxClient
 
 NAME = "gtz-demo-attn-impl-1"
+
+
+def config() -> Config:
+    return Config(
+        project="demo",
+        shared_repo="https://github.com/o/research.git",
+        tooling_repo="https://github.com/o/groktimizer.git",
+    )
 
 
 async def test_status_running_with_turn_state():
@@ -31,6 +41,18 @@ async def test_status_running_with_turn_state():
     assert status["running"] is True
     assert status["turn_status"] == "running"
     assert status["queued"] == 2
+
+
+async def test_status_reports_bootstrap_as_provisioning():
+    client = FakeSandboxClient()
+    client.exec_responses["tmux has-session"] = ExecResult(
+        stdout="provisioning\n",
+        exit_code=0,
+    )
+    status = await agent_status(client, NAME)
+    assert status["running"] is False
+    assert status["provisioning"] is True
+    assert status["turn_status"] == "stopped"
 
 
 async def test_tail():
@@ -117,6 +139,46 @@ async def test_send_interrupt_and_provenance():
     command = client.execs[-1][1]
     assert "--mode interrupt" in command
     assert "--sender-sandbox gtz-demo-hq-main" in command
+
+
+async def test_interrupt_turn_does_not_enqueue_a_message():
+    client = FakeSandboxClient()
+    client.exec_responses["agent_runner.py interrupt"] = ExecResult(
+        stdout='{"interrupted":true,"turn_id":"turn-1"}\n',
+        exit_code=0,
+    )
+    result = await interrupt_turn(client, NAME)
+    assert result == {"interrupted": True, "turn_id": "turn-1"}
+    assert "enqueue" not in client.execs[-1][1]
+
+
+async def test_stale_runtime_is_not_refreshed_during_active_turn():
+    client = FakeSandboxClient()
+    client.exec_responses["agent_runner.py export"] = ExecResult(
+        stdout=(
+            '{"runtime_id":"runtime-1","session_id":"session-1",'
+            '"turn_status":"running","cursor":1,"turns":[],"events":[]}\n'
+        ),
+        exit_code=0,
+    )
+    refreshed = await ensure_runtime_current(client, NAME, config())
+    assert refreshed is False
+    assert (NAME, "/opt/gtz/agent_runner.py") not in client.files
+
+
+async def test_stale_idle_runtime_is_refreshed_with_current_config():
+    client = FakeSandboxClient()
+    client.exec_responses["agent_runner.py export"] = ExecResult(
+        stdout=(
+            '{"runtime_id":"runtime-1","session_id":"session-1",'
+            '"turn_status":"idle","cursor":1,"turns":[],"events":[]}\n'
+        ),
+        exit_code=0,
+    )
+    refreshed = await ensure_runtime_current(client, NAME, config())
+    assert refreshed is True
+    assert (NAME, "/opt/gtz/agent_runner.py") in client.files
+    assert (NAME, "/opt/gtz/config.env") in client.files
 
 
 async def test_repair_requires_current_runtime():

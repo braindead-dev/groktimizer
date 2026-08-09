@@ -1,7 +1,7 @@
 # tests/test_config.py
 from pathlib import Path
 
-from groktimizer.config import Config, load_config
+from groktimizer.config import DEFAULT_GPU_TYPE, Budget, Config, load_config
 
 TOML = """
 [project]
@@ -34,3 +34,8 @@ def test_round_trip(tmp_path: Path):
     p.write_text(TOML)
     cfg = load_config(p)
     assert Config.model_validate_json(cfg.model_dump_json()) == cfg
+
+
+def test_default_gpu_fits_grok_2():
+    assert Budget().allowed_gpu_types == [DEFAULT_GPU_TYPE]
+    assert "RTX PRO 6000 Blackwell" in DEFAULT_GPU_TYPE

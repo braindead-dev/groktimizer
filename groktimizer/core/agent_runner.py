@@ -21,6 +21,7 @@ from uuid import uuid4
 
 DB_PATH = Path(os.environ.get("GTZ_RUNTIME_DB", "/var/lib/gtz/runtime.db"))
 MAX_EVENT_TEXT = 64_000
+STREAM_CHUNK_SIZE = 64 * 1024
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS metadata (
@@ -221,6 +222,22 @@ def enqueue_turn(
         return turn_with_revision(db, row)
 
 
+def interrupt_active_turn() -> dict[str, Any]:
+    """Request cancellation of the active turn without queuing another prompt."""
+    with connect() as db:
+        active = db.execute(
+            "SELECT id FROM turns WHERE status IN ('running','interrupting') "
+            "ORDER BY started_at DESC LIMIT 1"
+        ).fetchone()
+        if not active:
+            return {"interrupted": False, "turn_id": None}
+        turn_id = str(active["id"])
+        db.execute("UPDATE turns SET status='interrupting' WHERE id=?", (turn_id,))
+        append_event(db, turn_id, "turn_status", {"status": "interrupting"})
+        set_meta(db, "interrupt_requested", f"operator-stop-{uuid4().hex}")
+        return {"interrupted": True, "turn_id": turn_id}
+
+
 def runtime_snapshot(after: int = 0) -> dict[str, Any]:
     with connect() as db:
         events = [
@@ -383,16 +400,17 @@ async def pump_output(proc: asyncio.subprocess.Process, turn_id: str) -> dict[st
     result = {"completed": False, "saw_session": False}
     if proc.stdout is None:
         raise RuntimeError("Grok process stdout was not captured")
-    while line := await proc.stdout.readline():
+
+    def consume_line(line: bytes) -> None:
         text = line.decode("utf-8", errors="replace").strip()
         if not text:
-            continue
+            return
         try:
             raw = json.loads(text)
         except json.JSONDecodeError:
             with connect() as db:
                 append_event(db, turn_id, "diagnostic", {"text": text})
-            continue
+            return
         params = raw.get("params")
         if isinstance(params, dict) and isinstance(params.get("sessionId"), str):
             result["saw_session"] = True
@@ -409,6 +427,15 @@ async def pump_output(proc: asyncio.subprocess.Process, turn_id: str) -> dict[st
                 )
             if event_type == "turn_completed":
                 result["completed"] = True
+
+    buffer = bytearray()
+    while chunk := await proc.stdout.read(STREAM_CHUNK_SIZE):
+        buffer.extend(chunk)
+        while (separator := buffer.find(b"\n")) >= 0:
+            consume_line(bytes(buffer[:separator]))
+            del buffer[: separator + 1]
+    if buffer:
+        consume_line(bytes(buffer))
     return result
 
 
@@ -525,12 +552,14 @@ async def run_turn(turn: sqlite3.Row) -> None:
     update_stop = asyncio.Event()
     updates_task = asyncio.create_task(pump_updates_file(path, update_offset, turn_id, update_stop))
     interrupted = False
+    operator_stop = False
     while proc.returncode is None:
         await asyncio.sleep(0.2)
         with connect() as db:
             requested = get_meta(db, "interrupt_requested")
             if requested and requested != turn_id:
                 interrupted = True
+                operator_stop = requested.startswith("operator-stop-")
                 db.execute("UPDATE turns SET status='interrupting' WHERE id=?", (turn_id,))
                 append_event(db, turn_id, "turn_status", {"status": "interrupting"})
                 set_meta(db, "interrupt_requested", "")
@@ -549,7 +578,11 @@ async def run_turn(turn: sqlite3.Row) -> None:
             set_meta(db, "session_started", "1")
         if interrupted:
             status = "interrupted"
-            error = "Interrupted by a newer steering message"
+            error = (
+                "Stopped by operator"
+                if operator_stop
+                else "Interrupted by a newer steering message"
+            )
         elif proc.returncode == 0 or output_result["completed"] or updates_result["completed"]:
             status = "completed"
             error = None
@@ -639,6 +672,7 @@ def parse_args() -> argparse.Namespace:
     export = sub.add_parser("export")
     export.add_argument("--after", type=int, default=0)
     sub.add_parser("status")
+    sub.add_parser("interrupt")
     sub.add_parser("daemon")
     return parser.parse_args()
 
@@ -670,6 +704,8 @@ def main() -> None:
         if args.command == "status":
             result.pop("events", None)
             result.pop("turns", None)
+    elif args.command == "interrupt":
+        result = interrupt_active_turn()
     elif args.command == "daemon":
         try:
             asyncio.run(daemon())
