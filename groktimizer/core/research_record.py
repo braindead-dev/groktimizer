@@ -350,6 +350,8 @@ def _install_project(
         turn_prefix = f"{sandbox}-record-"
         existing = store.conversation_for(sandbox)
         legacy_turn_ids = (
+            f"{sandbox}-evidence",
+            f"{sandbox}-active",
             f"{sandbox}-turn-completed",
             f"{sandbox}-turn-active",
         )

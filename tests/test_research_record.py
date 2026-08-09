@@ -174,7 +174,7 @@ def test_reimport_preserves_and_rebases_live_history(tmp_path: Path):
     with Store(tmp_path / "research.db") as store:
         record.install(store, installed_at=installed_at)
         legacy_turn = {
-            "id": f"{sandbox}-turn-completed",
+            "id": f"{sandbox}-evidence",
             "client_id": "legacy-record-client",
             "prompt": "Previous archive summary.",
             "display_prompt": "Previous archive summary.",
