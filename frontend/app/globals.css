@@ -565,30 +565,6 @@ button:disabled {
 
 .launch-hero .hero-mark { margin-bottom: 10px; }
 
-.program-heading { margin-bottom: 16px; }
-.program-heading > span {
-  color: var(--muted);
-  font-family: var(--font-geist-mono), monospace;
-  font-size: 8px;
-  letter-spacing: .12em;
-  text-transform: uppercase;
-}
-.program-heading h1 {
-  margin: 5px 0 6px;
-  font-size: clamp(25px, 3vw, 38px);
-  font-weight: 520;
-  letter-spacing: -.055em;
-}
-.program-heading p {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-  margin: 0;
-  color: var(--muted);
-  font-size: 9px;
-}
-
 .hero-subtitle {
   max-width: 590px;
   margin: 21px 0 32px;

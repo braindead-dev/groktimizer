@@ -105,37 +105,9 @@ export interface ControlPlaneSnapshot {
   }>;
 }
 
-export interface BaselineSnapshot {
-  hardware: {
-    gpu: string;
-    vramGb: number;
-    contextTokens: number;
-  };
-  latency: Array<{
-    promptTokens: number;
-    ttftMs: number;
-    decodeTps: number;
-    prefillTps: number;
-  }>;
-  throughput: Array<{
-    concurrency: number;
-    aggregateDecodeTps: number;
-    perStreamTps: number;
-    medianTtftMs: number;
-    endToEndTps: number;
-  }>;
-  accuracy: Array<{
-    task: string;
-    correct: number;
-    total: number;
-    accuracy: number;
-    unparsed: number;
-  }>;
-}
-
 export type ControlPlaneResponse =
-  | { connected: true; snapshot: ControlPlaneSnapshot; baseline: BaselineSnapshot }
-  | { connected: false; mode: "baseline"; reason: string; baseline: BaselineSnapshot };
+  | { connected: true; snapshot: ControlPlaneSnapshot }
+  | { connected: false; mode: "offline"; reason: string };
 
 export type AgentTurnStatus =
   | "idle"

@@ -3,7 +3,6 @@
 import { createContext, useContext, useEffect, useReducer, type Dispatch, type ReactNode } from "react";
 import { fetchControlPlane } from "@/lib/control-plane-client";
 import type {
-  BaselineSnapshot,
   ControlPlaneSnapshot,
   LiveAgentSnapshot,
   ResearchAgentRecord,
@@ -12,7 +11,7 @@ import type {
 import type { Agent, Project, ResearchTeam, ViewSelection } from "@/lib/types";
 
 interface ControlPlaneState {
-  mode: "loading" | "baseline" | "live";
+  mode: "loading" | "offline" | "live";
   project?: string;
   reason?: string;
   maxConcurrentPods?: number;
@@ -43,8 +42,8 @@ type Action =
   | { type: "set-sidebar-width"; width: number }
   | { type: "toggle-detail" }
   | { type: "close-sidebar" }
-  | { type: "hydrate-control-plane"; snapshot: ControlPlaneSnapshot; baseline: BaselineSnapshot }
-  | { type: "control-plane-baseline"; baseline: BaselineSnapshot; reason: string }
+  | { type: "hydrate-control-plane"; snapshot: ControlPlaneSnapshot }
+  | { type: "control-plane-offline"; reason: string }
   | { type: "control-plane-error"; reason: string }
   | { type: "project-launch-requested"; project: string; objective: string }
   | { type: "project-launch-failed"; project: string; error: string }
@@ -90,78 +89,6 @@ function placeholderAgent(id: string, name: string, role: Agent["role"], task: s
     progress: 0,
     tokens: "—",
     elapsed: "—",
-  };
-}
-
-function projectFromBaseline(baseline: BaselineSnapshot): Project {
-  const throughput = [...baseline.throughput].sort((left, right) => left.concurrency - right.concurrency);
-  const first = throughput[0];
-  const best = throughput.reduce((current, point) =>
-    !current || point.aggregateDecodeTps > current.aggregateDecodeTps ? point : current, first);
-  const mmlu = baseline.accuracy.find((result) => result.task === "mmlu");
-
-  return {
-    id: "baseline-grok2-blackwell",
-    source: "baseline",
-    name: "Grok-2 · Blackwell baseline",
-    shortName: "Blackwell baseline",
-    objective: `Committed benchmark results on ${baseline.hardware.gpu}: latency, throughput, and generative accuracy.`,
-    status: "complete",
-    createdAt: "Committed benchmark artifacts",
-    metric: "Aggregate throughput",
-    unit: "tok/s",
-    baseline: Number((first?.aggregateDecodeTps ?? 0).toFixed(1)),
-    best: Number((best?.aggregateDecodeTps ?? 0).toFixed(1)),
-    trend: throughput.map((point) => ({
-      run: point.concurrency,
-      value: Number(point.aggregateDecodeTps.toFixed(1)),
-      label: `Concurrency ${point.concurrency}`,
-    })),
-    metrics: [{
-      key: "aggregate-throughput",
-      label: "Aggregate throughput",
-      unit: "tok/s",
-      direction: "higher",
-      accent: "orange",
-      baseline: Number((first?.aggregateDecodeTps ?? 0).toFixed(1)),
-      best: Number((best?.aggregateDecodeTps ?? 0).toFixed(1)),
-      points: throughput.map((point) => ({
-        run: point.concurrency,
-        value: Number(point.aggregateDecodeTps.toFixed(1)),
-        label: `Concurrency ${point.concurrency}`,
-      })),
-    }],
-    orchestrator: placeholderAgent(
-      "baseline-no-orchestrator",
-      "No live orchestrator",
-      "orchestrator",
-      "Configure groktimizer.toml to connect live agents",
-    ),
-    implementor: placeholderAgent(
-      "baseline-no-reconciler",
-      "No live reconciler",
-      "implementor",
-      "A reconciler appears after a live research run",
-    ),
-    teams: [],
-    decisions: [
-      {
-        id: "baseline-concurrency",
-        title: "Eight-stream baseline",
-        detail: `Aggregate decode reaches ${best?.aggregateDecodeTps.toFixed(1) ?? "—"} tok/s on the 96 GB Blackwell host.`,
-        impact: `${((best?.aggregateDecodeTps ?? 0) / Math.max(first?.aggregateDecodeTps ?? 1, 1)).toFixed(2)}× TPS`,
-        state: "promoted",
-        time: "measured",
-      },
-      {
-        id: "baseline-accuracy",
-        title: "MMLU coherence check",
-        detail: `${mmlu?.correct ?? 0}/${mmlu?.total ?? 0} generative multiple-choice answers correct with ${mmlu?.unparsed ?? 0} unparsed.`,
-        impact: `${((mmlu?.accuracy ?? 0) * 100).toFixed(1)}%`,
-        state: "promoted",
-        time: "measured",
-      },
-    ],
   };
 }
 
@@ -232,7 +159,6 @@ function projectFromRecord(record: ResearchProjectRecord): Project {
     best: primary.best,
     trend: primary.points,
     metrics,
-    programTitle: record.program_title,
     sourceUrl: record.source_url,
     hardware: record.hardware,
     orchestrator: recordAgent(record.orchestrator, record.id, "hq"),
@@ -299,10 +225,9 @@ function normalizeLiveAgent(source: LiveAgentSnapshot, referenceTime: number): A
   };
 }
 
-function projectFromSnapshot(snapshot: ControlPlaneSnapshot, baseline: BaselineSnapshot): Project {
+function projectFromSnapshot(snapshot: ControlPlaneSnapshot): Project {
   const projectRecord = snapshot.projects.find((project) => project.project === snapshot.project)?.record;
   if (projectRecord) return projectFromRecord(projectRecord);
-  const base = projectFromBaseline(baseline);
   const parsedReferenceTime = Date.parse(snapshot.generated_at) / 1000;
   const referenceTime = Number.isFinite(parsedReferenceTime) ? parsedReferenceTime : 0;
   const agents = snapshot.agents.map((agent) => ({
@@ -356,38 +281,47 @@ function projectFromSnapshot(snapshot: ControlPlaneSnapshot, baseline: BaselineS
   const label = snapshot.project_state.title
     || projectLabel(snapshot.project, snapshot.project_state.objective);
   return {
-    ...base,
     id: `live-${snapshot.project}`,
     projectName: snapshot.project,
     source: "live",
-    name: `${label} · Live research`,
+    name: label,
     shortName: label,
-    objective: snapshot.project_state.objective || `Live hierarchical autoresearch run from the Blaxel sandbox registry. Target gain ${snapshot.research.target_gain_pct}% with at most ${snapshot.research.max_accuracy_loss_pct}% quality loss.`,
+    objective: snapshot.project_state.objective,
     status: snapshot.agents.some((agent) => agent.running) ? "running" : "paused",
-    createdAt: "Live from Blaxel",
+    createdAt: snapshot.generated_at,
+    metric: "",
+    unit: "",
+    baseline: 0,
+    best: 0,
+    trend: [],
+    metrics: [],
     orchestrator: main,
     implementor: reconciler,
     teams,
+    decisions: [],
     lifecycle: snapshot.project_state.status,
     lifecycleError: snapshot.project_state.error,
   };
 }
 
-function optimisticProject(state: ResearchState, projectName: string, objective: string): Project | null {
-  const base = state.projects[0];
-  if (!base) return null;
+function optimisticProject(projectName: string, objective: string): Project {
   const projectId = `live-${projectName}`;
   const label = projectLabel(projectName, objective);
   return {
-    ...base,
     id: projectId,
     projectName,
     source: "live",
-    name: `${label} · Starting research`,
+    name: label,
     shortName: label,
     objective,
     status: "paused",
     createdAt: "Provisioning now",
+    metric: "",
+    unit: "",
+    baseline: 0,
+    best: 0,
+    trend: [],
+    metrics: [],
     orchestrator: {
       ...placeholderAgent(
         `live-${projectName}-orchestrator`,
@@ -398,7 +332,14 @@ function optimisticProject(state: ResearchState, projectName: string, objective:
       sandboxName: `gtz-${projectName}-hq-main`,
       branchName: "main",
     },
+    implementor: placeholderAgent(
+      `live-${projectName}-reconciler`,
+      "Final reconciler",
+      "implementor",
+      "Dispatched after team synthesis",
+    ),
     teams: [],
+    decisions: [],
     lifecycle: "provisioning",
     lifecycleError: null,
   };
@@ -425,8 +366,7 @@ function reducer(state: ResearchState, action: Action): ResearchState {
     case "refresh-control-plane":
       return { ...state, controlPlaneRevision: state.controlPlaneRevision + 1 };
     case "project-launch-requested": {
-      const project = optimisticProject(state, action.project, action.objective);
-      if (!project) return state;
+      const project = optimisticProject(action.project, action.objective);
       return {
         ...state,
         projects: [project, ...state.projects.filter((candidate) => candidate.id !== project.id)],
@@ -456,20 +396,17 @@ function reducer(state: ResearchState, action: Action): ResearchState {
           : project),
       };
     case "control-plane-error":
-      return { ...state, controlPlane: { mode: "baseline", reason: action.reason } };
-    case "control-plane-baseline": {
+      return { ...state, projects: [], controlPlane: { mode: "offline", reason: action.reason } };
+    case "control-plane-offline":
       if (state.controlPlane.mode === "live") return state;
-      if (state.controlPlane.mode === "baseline" && state.projects[0]?.source === "baseline") return state;
-      const project = projectFromBaseline(action.baseline);
       return {
         ...state,
-        projects: [project],
+        projects: [],
         selection: { type: "home" },
         expandedProjects: [],
         expandedTeams: [],
-        controlPlane: { mode: "baseline", reason: action.reason },
+        controlPlane: { mode: "offline", reason: action.reason },
       };
-    }
     case "hydrate-control-plane": {
       const liveSnapshots = action.snapshot.projects.filter((snapshot) =>
         snapshot.agents.length > 0
@@ -480,10 +417,9 @@ function reducer(state: ResearchState, action: Action): ResearchState {
       const hasLiveProject = liveSnapshots.length > 0;
       if (!hasLiveProject) {
         if (state.projects[0]?.lifecycle === "provisioning") return state;
-        const baseline = projectFromBaseline(action.baseline);
         return {
           ...state,
-          projects: [baseline],
+          projects: [],
           selection: state.selection.type === "home" || state.selection.type === "activity"
             ? state.selection
             : { type: "home" },
@@ -499,16 +435,13 @@ function reducer(state: ResearchState, action: Action): ResearchState {
           },
         };
       }
-      const normalized = liveSnapshots.map((snapshot) => projectFromSnapshot(
-        {
-          ...action.snapshot,
-          project: snapshot.project,
-          project_state: snapshot.project_state,
-          agents: snapshot.agents,
-          projects: [{ ...snapshot }],
-        },
-        action.baseline,
-      ));
+      const normalized = liveSnapshots.map((snapshot) => projectFromSnapshot({
+        ...action.snapshot,
+        project: snapshot.project,
+        project_state: snapshot.project_state,
+        agents: snapshot.agents,
+        projects: [{ ...snapshot }],
+      }));
       const pending = state.projects.filter((project) =>
         project.source === "live"
         && (project.lifecycle === "provisioning" || project.lifecycle === "failed")
@@ -569,9 +502,9 @@ export function ResearchStoreProvider({ children }: { children: ReactNode }) {
       .then((response) => {
         if (!active) return;
         if (response.connected) {
-          dispatch({ type: "hydrate-control-plane", snapshot: response.snapshot, baseline: response.baseline });
+          dispatch({ type: "hydrate-control-plane", snapshot: response.snapshot });
         } else {
-          dispatch({ type: "control-plane-baseline", baseline: response.baseline, reason: response.reason });
+          dispatch({ type: "control-plane-offline", reason: response.reason });
         }
       })
       .catch(() => {

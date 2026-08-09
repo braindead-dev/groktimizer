@@ -69,7 +69,6 @@ export interface Project {
   best: number;
   trend: MetricPoint[];
   metrics: MetricSeries[];
-  programTitle?: string;
   sourceUrl?: string;
   hardware?: string;
   orchestrator: Agent;
