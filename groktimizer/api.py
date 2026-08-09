@@ -418,7 +418,7 @@ async def _agent_stream(
     try:
         if process.stdout is None:
             raise RuntimeError("agent stream did not expose stdout")
-        while not request.is_disconnected():
+        while not await request.is_disconnected():
             line = await process.stdout.readline()
             if not line:
                 break
@@ -686,6 +686,7 @@ def main() -> None:
         port=int(os.environ.get("GTZ_API_PORT", "8080")),
         proxy_headers=True,
         forwarded_allow_ips=os.environ.get("GTZ_FORWARDED_ALLOW_IPS", "127.0.0.1"),
+        access_log=False,
     )
 
 
