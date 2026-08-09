@@ -1,0 +1,159 @@
+diff --git a/crates/codegen/xai-grok-pager-minimal/src/live.rs b/crates/codegen/xai-grok-pager-minimal/src/live.rs
+index 6aa845b..08abe1c 100644
+--- a/crates/codegen/xai-grok-pager-minimal/src/live.rs
++++ b/crates/codegen/xai-grok-pager-minimal/src/live.rs
+@@ -12 +12 @@ use ratatui::layout::Rect;
+-use ratatui::style::{Color, Style};
++use ratatui::style::{Color, Modifier, Style};
+@@ -634 +634,7 @@ fn render_prompt_info(
+-            segs.push((label, base));
++            let model_style = if xai_grok_pager::branding::is_groktimized_label(&label) {
++                base.fg(xai_grok_pager::branding::GROKTIMIZED_PURPLE_BRIGHT)
++                    .add_modifier(Modifier::BOLD)
++            } else {
++                base
++            };
++            segs.push((label, model_style));
+diff --git a/crates/codegen/xai-grok-pager-minimal/src/welcome.rs b/crates/codegen/xai-grok-pager-minimal/src/welcome.rs
+index e05b47c..ef1d83f 100644
+--- a/crates/codegen/xai-grok-pager-minimal/src/welcome.rs
++++ b/crates/codegen/xai-grok-pager-minimal/src/welcome.rs
+@@ -86,4 +86,11 @@ pub fn maybe_commit_welcome(app: &mut AppView, terminal: &mut PagerTerminal) {
+-        info.push(Line::from(Span::styled(
+-            format!("Model · {model}"),
+-            theme.muted(),
+-        )));
++        let model_style = if xai_grok_pager::branding::is_groktimized_label(&model) {
++            Style::default()
++                .fg(xai_grok_pager::branding::GROKTIMIZED_PURPLE_BRIGHT)
++                .add_modifier(Modifier::BOLD)
++        } else {
++            theme.muted()
++        };
++        info.push(Line::from(vec![
++            Span::styled("Model · ", theme.muted()),
++            Span::styled(model, model_style),
++        ]));
+diff --git a/crates/codegen/xai-grok-pager/src/branding.rs b/crates/codegen/xai-grok-pager/src/branding.rs
+new file mode 100644
+index 0000000..2ba7ccd
+--- /dev/null
++++ b/crates/codegen/xai-grok-pager/src/branding.rs
+@@ -0,0 +1,36 @@
++//! Narrow Groktimizer presentation hooks.
++//!
++//! The model remains a regular catalog entry; this module only gives its
++//! human-facing label a consistent accent anywhere Grok Build renders it.
++
++use ratatui::style::Color;
++
++pub const GROKTIMIZED_MODEL_NAME: &str = "Groktimized 2";
++pub const GROKTIMIZED_PURPLE: Color = Color::Rgb(168, 85, 247);
++pub const GROKTIMIZED_PURPLE_BRIGHT: Color = Color::Rgb(196, 132, 252);
++
++/// Labels can carry transient UI suffixes such as `(current)` or `(high)`.
++pub fn is_groktimized_label(label: &str) -> bool {
++    let label = label.trim();
++    label.eq_ignore_ascii_case(GROKTIMIZED_MODEL_NAME)
++        || label
++            .get(..GROKTIMIZED_MODEL_NAME.len())
++            .is_some_and(|prefix| prefix.eq_ignore_ascii_case(GROKTIMIZED_MODEL_NAME))
++            && label
++                .get(GROKTIMIZED_MODEL_NAME.len()..)
++                .is_some_and(|suffix| suffix.starts_with(" ("))
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    #[test]
++    fn identifies_plain_and_decorated_labels_only() {
++        assert!(is_groktimized_label("Groktimized 2"));
++        assert!(is_groktimized_label("Groktimized 2 (current)"));
++        assert!(is_groktimized_label("groktimized 2 (high)"));
++        assert!(!is_groktimized_label("Groktimized 20"));
++        assert!(!is_groktimized_label("Grok 4.5"));
++    }
++}
+diff --git a/crates/codegen/xai-grok-pager/src/lib.rs b/crates/codegen/xai-grok-pager/src/lib.rs
+index 949379f..d98f3c3 100644
+--- a/crates/codegen/xai-grok-pager/src/lib.rs
++++ b/crates/codegen/xai-grok-pager/src/lib.rs
+@@ -7,0 +8 @@ pub mod app;
++pub mod branding;
+diff --git a/crates/codegen/xai-grok-pager/src/slash/commands/model.rs b/crates/codegen/xai-grok-pager/src/slash/commands/model.rs
+index 4d82c80..641cff8 100644
+--- a/crates/codegen/xai-grok-pager/src/slash/commands/model.rs
++++ b/crates/codegen/xai-grok-pager/src/slash/commands/model.rs
+@@ -156 +156,13 @@ fn build_model_items(models: &ModelState) -> Vec<ArgItem> {
+-    for (id, info) in &models.available {
++    // Keep the accelerated endpoint first without disturbing the catalog's
++    // native ordering for every stock model behind it.
++    let ordered = models
++        .available
++        .iter()
++        .filter(|(_, info)| crate::branding::is_groktimized_label(&info.name))
++        .chain(
++            models
++                .available
++                .iter()
++                .filter(|(_, info)| !crate::branding::is_groktimized_label(&info.name)),
++        );
++    for (id, info) in ordered {
+@@ -302,0 +315,19 @@ mod tests {
++    #[test]
++    fn groktimized_model_is_first_without_reordering_stock_models() {
++        let mut state = ModelState::default();
++        for (id, name) in [
++            ("grok-4.5", "Grok 4.5"),
++            ("groktimized-2", "Groktimized 2"),
++            ("grok-4", "Grok 4"),
++        ] {
++            let (id, info) = plain_model(id, name);
++            state.available.insert(id, info);
++        }
++
++        let names: Vec<_> = build_model_items(&state)
++            .into_iter()
++            .map(|item| item.match_text)
++            .collect();
++        assert_eq!(names, ["Groktimized 2", "Grok 4.5", "Grok 4"]);
++    }
++
+diff --git a/crates/codegen/xai-grok-pager/src/views/prompt_widget/mod.rs b/crates/codegen/xai-grok-pager/src/views/prompt_widget/mod.rs
+index 2b3b9d7..0d203a0 100644
+--- a/crates/codegen/xai-grok-pager/src/views/prompt_widget/mod.rs
++++ b/crates/codegen/xai-grok-pager/src/views/prompt_widget/mod.rs
+@@ -3401 +3401,12 @@ impl PromptWidget {
+-        let model_style = Self::chrome_caption_style(bg, theme, focused);
++        let model_style = if crate::branding::is_groktimized_label(info.model_name) {
++            Style::default()
++                .fg(if focused {
++                    crate::branding::GROKTIMIZED_PURPLE_BRIGHT
++                } else {
++                    crate::branding::GROKTIMIZED_PURPLE
++                })
++                .bg(bg)
++                .add_modifier(Modifier::BOLD)
++        } else {
++            Self::chrome_caption_style(bg, theme, focused)
++        };
+diff --git a/crates/codegen/xai-grok-pager/src/views/slash_dropdown.rs b/crates/codegen/xai-grok-pager/src/views/slash_dropdown.rs
+index 738271c..a7fb479 100644
+--- a/crates/codegen/xai-grok-pager/src/views/slash_dropdown.rs
++++ b/crates/codegen/xai-grok-pager/src/views/slash_dropdown.rs
+@@ -328,2 +328,11 @@ fn build_item_lines(
+-    let primary_fg = embed.map_or(theme.text_primary, |e| e.fg(theme.text_primary));
+-    let match_fg = embed.map_or(theme.fuzzy_accent, |e| e.fg(theme.fuzzy_accent));
++    let branded = crate::branding::is_groktimized_label(&item.display);
++    let primary_fg = if branded {
++        crate::branding::GROKTIMIZED_PURPLE
++    } else {
++        embed.map_or(theme.text_primary, |e| e.fg(theme.text_primary))
++    };
++    let match_fg = if branded {
++        crate::branding::GROKTIMIZED_PURPLE_BRIGHT
++    } else {
++        embed.map_or(theme.fuzzy_accent, |e| e.fg(theme.fuzzy_accent))
++    };

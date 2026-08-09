@@ -1,5 +1,7 @@
+import hashlib
 import sys
 import tomllib
+import zipfile
 from pathlib import Path
 
 import pytest
@@ -7,12 +9,16 @@ import pytest
 from groktimizer.integrations.grok_build import (
     BEGIN_MARKER,
     DEFAULT_BASE_URL,
+    BinaryAsset,
     ModelConfig,
     ModelInstallError,
+    current_binary_asset,
+    install_branded_binary,
     install_model_config,
     launch_fast_model,
     normalize_base_url,
     render_model_block,
+    restore_stock_binary,
     validate_auth,
 )
 
@@ -47,7 +53,7 @@ def test_install_recovers_after_grok_reserializes_managed_table(tmp_path):
     path = tmp_path / "config.toml"
     path.write_text(
         'disabled_mcp_servers = ["PostHog"]\n\n'
-        '[model.groktimizer-fast]\n'
+        "[model.groktimizer-fast]\n"
         'model = "old-model"\n'
         'base_url = "http://localhost:8000/v1"\n'
         'description = "Optimized Grok deployment managed by Groktimizer"\n'
@@ -66,9 +72,7 @@ def test_install_recovers_after_grok_reserializes_managed_table(tmp_path):
 def test_install_does_not_overwrite_foreign_alias(tmp_path):
     path = tmp_path / "config.toml"
     path.write_text(
-        '[model.groktimized-2]\n'
-        'model = "someone-elses-model"\n'
-        'description = "Unrelated model"\n'
+        '[model.groktimized-2]\nmodel = "someone-elses-model"\ndescription = "Unrelated model"\n'
     )
 
     with pytest.raises(ModelInstallError, match="already exists outside"):
@@ -93,7 +97,57 @@ def test_public_endpoint_requires_dedicated_key(monkeypatch):
     validate_auth(ModelConfig())
     assert ModelConfig().base_url == DEFAULT_BASE_URL
     assert ModelConfig().model == "grok-2"
-    assert ModelConfig().name == "🟣 Groktimized 2"
+    assert ModelConfig().name == "Groktimized 2"
+
+
+def test_binary_asset_normalizes_apple_silicon_architecture():
+    assert current_binary_asset("Darwin", "arm64") is not None
+    assert current_binary_asset("Darwin", "aarch64") is not None
+    assert current_binary_asset("Linux", "arm64") is None
+
+
+def test_branded_binary_install_is_atomic_and_restorable(tmp_path):
+    grok_home = tmp_path / ".grok"
+    downloads = grok_home / "downloads"
+    managed_bin = grok_home / "bin"
+    downloads.mkdir(parents=True)
+    managed_bin.mkdir()
+    stock = downloads / "grok-macos-aarch64"
+    stock.write_text("#!/bin/sh\nprintf 'grok 1.0.0 stock\\n'\n")
+    stock.chmod(0o755)
+    for name in ("grok", "agent"):
+        (managed_bin / name).symlink_to("../downloads/grok-macos-aarch64")
+
+    archive = tmp_path / "branded.zip"
+    with zipfile.ZipFile(archive, "w", compression=zipfile.ZIP_DEFLATED) as bundle:
+        bundle.writestr("grok", "#!/bin/sh\nprintf 'grok 1.0.0 branded\\n'\n")
+        bundle.writestr("LICENSE", "Apache-2.0")
+        bundle.writestr("THIRD-PARTY-NOTICES", "notices")
+        bundle.writestr("GROKTIMIZER-NOTICE.txt", "modified build")
+    asset = BinaryAsset(
+        url=archive.as_uri(),
+        sha256=hashlib.sha256(archive.read_bytes()).hexdigest(),
+    )
+
+    result = install_branded_binary(grok_home, managed_bin / "grok", asset)
+
+    assert result.stock_version == "grok 1.0.0 stock"
+    assert result.branded_version == "grok 1.0.0 branded"
+    assert (managed_bin / "grok").resolve() == result.binary
+    assert (managed_bin / "agent").resolve() == result.binary
+    assert result.binary.stat().st_mode & 0o111
+    assert stock.exists()
+    assert result.manifest.stat().st_mode & 0o777 == 0o600
+
+    repeated = install_branded_binary(grok_home, managed_bin / "grok", asset)
+    assert repeated.stock_version == "grok 1.0.0 stock"
+    assert (managed_bin / "grok").resolve() == repeated.binary
+
+    restore_stock_binary(grok_home)
+
+    assert (managed_bin / "grok").readlink() == Path("../downloads/grok-macos-aarch64")
+    assert (managed_bin / "agent").readlink() == Path("../downloads/grok-macos-aarch64")
+    assert (managed_bin / "grok").resolve() == stock
 
 
 def test_install_can_preserve_existing_default(tmp_path):
@@ -111,8 +165,7 @@ def test_install_can_preserve_existing_default(tmp_path):
 def test_install_replaces_existing_default_without_touching_other_model_settings(tmp_path):
     path = tmp_path / "config.toml"
     path.write_text(
-        '[models]\ndefault = "grok-4.5"\nweb_search = "grok-4.5"\n\n'
-        '[ui]\nsimple_mode = true\n'
+        '[models]\ndefault = "grok-4.5"\nweb_search = "grok-4.5"\n\n[ui]\nsimple_mode = true\n'
     )
 
     install_model_config(path, ModelConfig(base_url="http://localhost:8000/v1"))

@@ -3,15 +3,19 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
+import platform
 import re
 import shutil
+import subprocess
 import sys
 import tempfile
 import tomllib
 import urllib.error
 import urllib.request
+import zipfile
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -23,7 +27,7 @@ LOCAL_HOSTS = {"127.0.0.1", "::1", "localhost"}
 DEFAULT_BASE_URL = "https://z08tqd2khleyx4-8000.proxy.runpod.net/v1"
 DEFAULT_MODEL = "grok-2"
 DEFAULT_ALIAS = "groktimized-2"
-DEFAULT_NAME = "🟣 Groktimized 2"
+DEFAULT_NAME = "Groktimized 2"
 LEGACY_ALIASES = ("groktimizer-fast",)
 MANAGED_DESCRIPTION = "Optimized Grok 2 deployment by Groktimizer"
 MANAGED_DESCRIPTIONS = {
@@ -31,10 +35,47 @@ MANAGED_DESCRIPTIONS = {
     "Optimized Grok deployment managed by Groktimizer",
 }
 TRUSTED_PUBLIC_ENDPOINTS = {DEFAULT_BASE_URL}
+UI_PATCH_VERSION = "1.0.0"
+UI_PATCH_RELEASE = f"grok-build-ui-v{UI_PATCH_VERSION}"
+UI_PATCH_ASSET_BASE = (
+    f"https://github.com/braindead-dev/groktimizer/releases/download/{UI_PATCH_RELEASE}"
+)
+UI_PATCH_ARCHIVE_MEMBERS = (
+    "grok",
+    "LICENSE",
+    "THIRD-PARTY-NOTICES",
+    "GROKTIMIZER-NOTICE.txt",
+)
 
 
 class ModelInstallError(RuntimeError):
     """Raised when the custom model cannot be installed safely."""
+
+
+class BinaryInstallError(RuntimeError):
+    """Raised when the branded Grok Build binary cannot be installed safely."""
+
+
+@dataclass(frozen=True)
+class BinaryAsset:
+    url: str
+    sha256: str
+
+
+UI_PATCH_ASSETS = {
+    ("Darwin", "arm64"): BinaryAsset(
+        url=f"{UI_PATCH_ASSET_BASE}/groktimized-grok-build-darwin-arm64.zip",
+        sha256="c3a012659c503be2a6c8a4e7269a18ca31ce5b898bb728337a888c2ace0b677b",
+    ),
+}
+
+
+@dataclass(frozen=True)
+class BinaryInstallResult:
+    binary: Path
+    manifest: Path
+    stock_version: str
+    branded_version: str
 
 
 @dataclass(frozen=True)
@@ -214,6 +255,291 @@ def default_config_path() -> Path:
     return grok_home / "config.toml"
 
 
+def default_grok_home() -> Path:
+    return Path(os.environ.get("GROK_HOME", Path.home() / ".grok"))
+
+
+def current_binary_asset(
+    system: str | None = None,
+    machine: str | None = None,
+) -> BinaryAsset | None:
+    system = system or platform.system()
+    machine = (machine or platform.machine()).lower()
+    normalized_machine = {
+        "aarch64": "arm64",
+        "x86_64": "x86_64",
+        "amd64": "x86_64",
+    }.get(machine, machine)
+    return UI_PATCH_ASSETS.get((system, normalized_machine))
+
+
+def _binary_version(binary: Path) -> str:
+    try:
+        result = subprocess.run(  # noqa: S603 - path is resolved from our managed install
+            [binary, "--version"],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=15,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise BinaryInstallError(f"could not run {binary}: {exc}") from exc
+    return (result.stdout or result.stderr).strip()
+
+
+def _download_binary_archive(asset: BinaryAsset, destination: Path) -> None:
+    if not re.fullmatch(r"[0-9a-f]{64}", asset.sha256):
+        raise BinaryInstallError("branded binary checksum is not configured")
+    request = urllib.request.Request(  # noqa: S310 - URL is release-pinned and checksummed
+        asset.url,
+        headers={
+            "Accept": "application/octet-stream",
+            "User-Agent": f"groktimizer-grok-build-installer/{UI_PATCH_VERSION}",
+        },
+    )
+    digest = hashlib.sha256()
+    try:
+        with urllib.request.urlopen(request, timeout=120) as response:  # noqa: S310
+            with destination.open("wb") as output:
+                while chunk := response.read(1024 * 1024):
+                    digest.update(chunk)
+                    output.write(chunk)
+    except (OSError, urllib.error.HTTPError) as exc:
+        raise BinaryInstallError(f"branded binary download failed: {exc}") from exc
+    actual = digest.hexdigest()
+    if actual != asset.sha256:
+        destination.unlink(missing_ok=True)
+        raise BinaryInstallError(
+            f"branded binary checksum mismatch (expected {asset.sha256}, got {actual})"
+        )
+
+
+def _extract_binary_archive(archive: Path, staging: Path) -> Path:
+    try:
+        with zipfile.ZipFile(archive) as bundle:
+            names = tuple(bundle.namelist())
+            if set(names) != set(UI_PATCH_ARCHIVE_MEMBERS) or len(names) != len(
+                UI_PATCH_ARCHIVE_MEMBERS
+            ):
+                raise BinaryInstallError(f"unexpected files in branded binary archive: {names}")
+            for name in UI_PATCH_ARCHIVE_MEMBERS:
+                destination = staging / name
+                with bundle.open(name) as source, destination.open("wb") as output:
+                    shutil.copyfileobj(source, output)
+    except (OSError, zipfile.BadZipFile) as exc:
+        raise BinaryInstallError(f"invalid branded binary archive: {exc}") from exc
+    binary = staging / "grok"
+    binary.chmod(0o755)
+    return binary
+
+
+def _atomic_symlink(target: str, link: Path) -> None:
+    link.parent.mkdir(parents=True, exist_ok=True)
+    temporary = link.with_name(f".{link.name}.groktimized.{os.getpid()}")
+    temporary.unlink(missing_ok=True)
+    try:
+        temporary.symlink_to(target)
+        os.replace(temporary, link)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def _atomic_json(path: Path, payload: dict[str, object]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    handle, temporary_name = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
+    temporary = Path(temporary_name)
+    try:
+        with os.fdopen(handle, "w") as output:
+            json.dump(payload, output, indent=2, sort_keys=True)
+            output.write("\n")
+        temporary.chmod(0o600)
+        os.replace(temporary, path)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def _is_branded_target(link: Path, branded_root: Path) -> bool:
+    if not (link.exists() or link.is_symlink()):
+        return False
+    try:
+        link.resolve(strict=False).relative_to(branded_root.resolve())
+    except ValueError:
+        return False
+    return True
+
+
+def _capture_link_state(link: Path, backup_root: Path) -> dict[str, object]:
+    if link.is_symlink():
+        return {"kind": "symlink", "target": os.readlink(link)}
+    if link.exists() and link.is_file():
+        backup_root.mkdir(parents=True, exist_ok=True)
+        timestamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%S%fZ")
+        backup = backup_root / f"{link.name}.{timestamp}"
+        shutil.copy2(link, backup)
+        return {
+            "kind": "file",
+            "backup": str(backup),
+            "mode": link.stat().st_mode & 0o777,
+        }
+    return {"kind": "absent"}
+
+
+def _restore_link_state(link: Path, state: dict[str, object]) -> None:
+    kind = state.get("kind")
+    if kind == "symlink":
+        target = state.get("target")
+        if not isinstance(target, str):
+            raise BinaryInstallError(f"invalid saved symlink state for {link}")
+        _atomic_symlink(target, link)
+        return
+    if kind == "file":
+        backup_value = state.get("backup")
+        if not isinstance(backup_value, str):
+            raise BinaryInstallError(f"invalid saved file state for {link}")
+        backup = Path(backup_value)
+        if not backup.is_file():
+            raise BinaryInstallError(f"stock binary backup is missing: {backup}")
+        handle, temporary_name = tempfile.mkstemp(prefix=f".{link.name}.", dir=link.parent)
+        os.close(handle)
+        temporary = Path(temporary_name)
+        try:
+            shutil.copy2(backup, temporary)
+            mode = state.get("mode")
+            temporary.chmod(mode if isinstance(mode, int) else 0o755)
+            os.replace(temporary, link)
+        finally:
+            temporary.unlink(missing_ok=True)
+        return
+    if kind == "absent":
+        link.unlink(missing_ok=True)
+        return
+    raise BinaryInstallError(f"invalid saved link kind for {link}: {kind!r}")
+
+
+def install_branded_binary(
+    grok_home: Path,
+    grok_binary: Path,
+    asset: BinaryAsset,
+) -> BinaryInstallResult:
+    """Install the checksummed UI-patched binary and atomically route stock links to it."""
+    managed_bin = grok_home / "bin"
+    grok_link = managed_bin / "grok"
+    branded_root = grok_home / "groktimized"
+    manifest_path = branded_root / "install.json"
+    version_root = branded_root / UI_PATCH_VERSION
+    if not (grok_link.exists() or grok_link.is_symlink()):
+        raise BinaryInstallError(f"stock Grok Build link is missing: {grok_link}")
+    if grok_binary.resolve() != grok_link.resolve():
+        raise BinaryInstallError(
+            f"grok resolves outside the stock managed install ({grok_binary} != {grok_link})"
+        )
+
+    manifest: dict[str, object] | None = None
+    if manifest_path.is_file() and _is_branded_target(grok_link, branded_root):
+        try:
+            loaded = json.loads(manifest_path.read_text())
+        except (OSError, json.JSONDecodeError) as exc:
+            raise BinaryInstallError(f"could not read prior install manifest: {exc}") from exc
+        if isinstance(loaded, dict) and isinstance(loaded.get("links"), dict):
+            manifest = loaded
+        else:
+            raise BinaryInstallError("prior install manifest is invalid")
+
+    if manifest is None:
+        stock_version = _binary_version(grok_binary.resolve())
+        links = {
+            name: _capture_link_state(managed_bin / name, branded_root / "backups")
+            for name in ("grok", "agent")
+            if (managed_bin / name).exists() or (managed_bin / name).is_symlink()
+        }
+        manifest = {
+            "schema": 1,
+            "active": False,
+            "stock_version": stock_version,
+            "links": links,
+        }
+    else:
+        stock_version_value = manifest.get("stock_version")
+        stock_version = stock_version_value if isinstance(stock_version_value, str) else "unknown"
+        links_value = manifest["links"]
+        links = links_value if isinstance(links_value, dict) else {}
+
+    branded_root.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix=".install.", dir=branded_root) as temporary_name:
+        staging = Path(temporary_name)
+        archive = staging / "bundle.zip"
+        _download_binary_archive(asset, archive)
+        staged_binary = _extract_binary_archive(archive, staging)
+        branded_version = _binary_version(staged_binary)
+        version_root.mkdir(parents=True, exist_ok=True)
+        for name in UI_PATCH_ARCHIVE_MEMBERS:
+            source = staging / name
+            destination = version_root / name
+            os.replace(source, destination)
+        installed_binary = version_root / "grok"
+        installed_binary.chmod(0o755)
+
+    swapped: list[str] = []
+    try:
+        for name in links:
+            link = managed_bin / name
+            relative_target = os.path.relpath(installed_binary, start=link.parent)
+            _atomic_symlink(relative_target, link)
+            swapped.append(name)
+    except OSError as exc:
+        for name in reversed(swapped):
+            state = links.get(name)
+            if isinstance(state, dict):
+                _restore_link_state(managed_bin / name, state)
+        raise BinaryInstallError(f"could not activate branded Grok Build: {exc}") from exc
+
+    manifest.update(
+        {
+            "active": True,
+            "ui_patch_version": UI_PATCH_VERSION,
+            "branded_binary": str(installed_binary),
+            "branded_version": branded_version,
+            "installed_at": datetime.now(UTC).isoformat(),
+        }
+    )
+    try:
+        _atomic_json(manifest_path, manifest)
+    except OSError as exc:
+        for name, state in links.items():
+            if isinstance(state, dict):
+                _restore_link_state(managed_bin / name, state)
+        raise BinaryInstallError(f"could not save branded install state: {exc}") from exc
+    return BinaryInstallResult(
+        binary=installed_binary,
+        manifest=manifest_path,
+        stock_version=stock_version,
+        branded_version=branded_version,
+    )
+
+
+def restore_stock_binary(grok_home: Path) -> Path:
+    """Restore every Grok Build entrypoint captured before the branded swap."""
+    branded_root = grok_home / "groktimized"
+    manifest_path = branded_root / "install.json"
+    if not manifest_path.is_file():
+        raise BinaryInstallError("no Groktimized Grok Build installation was found")
+    try:
+        manifest = json.loads(manifest_path.read_text())
+    except (OSError, json.JSONDecodeError) as exc:
+        raise BinaryInstallError(f"could not read install manifest: {exc}") from exc
+    links = manifest.get("links") if isinstance(manifest, dict) else None
+    if not isinstance(links, dict):
+        raise BinaryInstallError("install manifest has no restorable link state")
+    for name, state in links.items():
+        if not isinstance(name, str) or not isinstance(state, dict):
+            raise BinaryInstallError("install manifest contains invalid link state")
+        _restore_link_state(grok_home / "bin" / name, state)
+    manifest["active"] = False
+    manifest["restored_at"] = datetime.now(UTC).isoformat()
+    _atomic_json(manifest_path, manifest)
+    return manifest_path
+
+
 def install_model_config(path: Path, config: ModelConfig) -> Path | None:
     path.parent.mkdir(parents=True, exist_ok=True)
     existing = path.read_text() if path.exists() else ""
@@ -276,14 +602,42 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="add the model without selecting it as the default for new sessions",
     )
+    parser.add_argument(
+        "--config-only",
+        action="store_true",
+        help="register the model without installing the purple Grok Build UI patch",
+    )
+    parser.add_argument(
+        "--restore-stock",
+        action="store_true",
+        help="restore the stock Grok Build binary links and exit",
+    )
     return parser
 
 
 def main() -> None:
     parser = build_parser()
     args = parser.parse_args()
-    if shutil.which("grok") is None:
+    grok_binary_value = shutil.which("grok")
+    if grok_binary_value is None:
         parser.error("Grok Build is not installed; run https://x.ai/cli/install.sh first")
+    grok_binary = Path(grok_binary_value)
+    grok_home = default_grok_home()
+
+    if args.restore_stock:
+        try:
+            manifest = restore_stock_binary(grok_home)
+        except BinaryInstallError as exc:
+            parser.error(str(exc))
+        print(f"Restored stock Grok Build using {manifest}")
+        return
+
+    asset = None if args.config_only else current_binary_asset()
+    if asset is None and not args.config_only:
+        parser.error(
+            "the purple UI patch currently supports macOS on Apple Silicon; "
+            "pass --config-only to register the model without the UI patch"
+        )
 
     try:
         config = ModelConfig(
@@ -304,7 +658,10 @@ def main() -> None:
                     f"model {config.model!r} is not advertised by the endpoint: {available}"
                 )
         backup = install_model_config(args.config, config)
-    except ModelInstallError as exc:
+        binary_result = (
+            install_branded_binary(grok_home, grok_binary, asset) if asset is not None else None
+        )
+    except (BinaryInstallError, ModelInstallError) as exc:
         parser.error(str(exc))
 
     print(f"Added {config.name} as {config.alias!r} in {args.config}")
@@ -312,6 +669,13 @@ def main() -> None:
         print(f"Backup: {backup}")
     if config.make_default:
         print("Set as the default for new Grok Build sessions.")
+    if binary_result:
+        print(f"Installed the purple Grok Build UI patch: {binary_result.binary}")
+        print(f"Stock binary state is preserved in: {binary_result.manifest}")
+        print(
+            "Restore anytime: curl -fsSL https://groktimizer.com/install.sh "
+            "| sh -s -- --restore-stock"
+        )
     print("Open Grok Build normally: grok")
     print(f"Switch anytime: /model {config.alias}")
 

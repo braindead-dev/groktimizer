@@ -1,0 +1,17 @@
+Groktimized Grok Build UI patch 1.0.0
+
+This distribution is a modified build of xAI's Grok Build 1.0.0, based on
+https://github.com/xai-org/grok-build at commit
+8a14c91d88875a831a38b3a066b1683116bcb31c.
+
+Modifications by the Groktimizer project:
+
+- Render the `Groktimized 2` model label with a purple RGB accent in the model
+  selector, prompt chrome, dashboard prompt, minimal-mode status, and welcome
+  card.
+- Place `Groktimized 2` first in the model selector while preserving the order
+  of all other catalog entries.
+
+The complete patch is distributed as `groktimized-ui.patch` in the Groktimizer
+source repository. Grok Build is licensed under Apache License 2.0. Its original
+LICENSE and THIRD-PARTY-NOTICES are included with the binary distribution.
