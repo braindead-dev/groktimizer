@@ -120,8 +120,9 @@ def test_stream_ticket_is_scoped_signed_and_expiring(
         api.verify_stream_ticket(ticket, "gtz-demo-attn-lead")
 
     encoded, signature = ticket.split(".", 1)
+    tampered_signature = ("A" if signature[0] != "A" else "B") + signature[1:]
     with pytest.raises(api.ApiError, match="Invalid or expired"):
-        api.verify_stream_ticket(f"{encoded}.{signature[:-1]}x", "gtz-demo-hq-main")
+        api.verify_stream_ticket(f"{encoded}.{tampered_signature}", "gtz-demo-hq-main")
 
     monkeypatch.setattr(api.time, "time", lambda: 1_061)
     with pytest.raises(api.ApiError, match="Invalid or expired"):
