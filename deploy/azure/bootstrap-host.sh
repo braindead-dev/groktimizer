@@ -60,6 +60,7 @@ git -C /opt/groktimizer reset --hard "origin/$REPOSITORY_REF"
 chown -R groktimizer:groktimizer /opt/groktimizer
 runuser -u groktimizer -- uv sync --directory /opt/groktimizer --frozen --no-dev
 
+install -d -o root -g root -m 0755 /usr/local/libexec
 install -m 0755 "$SOURCE_ROOT/deploy/azure/fetch-key-vault-secrets.py" \
   /usr/local/libexec/groktimizer-fetch-secrets
 sed "s/__GTZ_KEY_VAULT__/${GTZ_KEY_VAULT}/g" \
