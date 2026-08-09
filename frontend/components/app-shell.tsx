@@ -34,7 +34,7 @@ function SelectionView() {
   if (selection.type === "project") return <ProjectOverview project={project} />;
 
   const agent = findAgent(project, selection.agentId) ?? project.orchestrator;
-  return <AgentWorkspace project={project} agent={agent} />;
+  return <AgentWorkspace key={agent.sandboxName ?? agent.id} project={project} agent={agent} />;
 }
 
 export function AppShell() {

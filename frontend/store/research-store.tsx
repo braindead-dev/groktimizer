@@ -10,8 +10,9 @@ interface ControlPlaneState {
   project?: string;
   reason?: string;
   maxConcurrentPods?: number;
+  maxTeams?: number;
+  maxAgentsPerTeam?: number;
   githubConnected?: boolean;
-  sawEmptyPoll?: boolean;  // tolerate one empty snapshot before evicting a live project
 }
 
 interface ResearchState {
@@ -35,6 +36,8 @@ type Action =
   | { type: "hydrate-control-plane"; snapshot: ControlPlaneSnapshot; baseline: BaselineSnapshot }
   | { type: "control-plane-baseline"; baseline: BaselineSnapshot; reason: string }
   | { type: "control-plane-error"; reason: string }
+  | { type: "project-launch-requested"; project: string; objective: string }
+  | { type: "project-launch-failed"; project: string; error: string }
   | { type: "refresh-control-plane" };
 
 const initialState: ResearchState = {
@@ -43,7 +46,7 @@ const initialState: ResearchState = {
   expandedProjects: [],
   expandedTeams: [],
   sidebarOpen: false,
-  detailOpen: true,
+  detailOpen: false,
   controlPlane: { mode: "loading" },
   controlPlaneRevision: 0,
 };
@@ -66,7 +69,6 @@ function placeholderAgent(id: string, name: string, role: Agent["role"], task: s
     progress: 0,
     tokens: "—",
     elapsed: "—",
-    messages: [],
   };
 }
 
@@ -150,25 +152,27 @@ function normalizeLiveAgent(source: LiveAgentSnapshot, referenceTime: number): A
       ? `${humanize(source.team)} orchestrator`
       : source.role === "reconciler"
         ? "Final reconciler"
-        : humanize(source.agent);
+      : humanize(source.agent);
+  const status: Agent["status"] = !source.running || source.turn_status === "stopped"
+    ? "blocked"
+    : source.turn_status === "running" || source.turn_status === "interrupting"
+      ? "thinking"
+      : source.turn_status === "failed"
+        ? "blocked"
+        : "running";
   return {
     id: source.sandbox_name,
     name,
     role,
-    status: source.running ? "running" : "blocked",
-    task: source.running ? `Sandbox session active · ${source.branch}` : `Sandbox session is not running · ${source.branch}`,
+    status,
+    task: source.running
+      ? `${humanize(source.turn_status)}${source.queued ? ` · ${source.queued} queued` : ""} · ${source.branch}`
+      : `Sandbox session is not running · ${source.branch}`,
     progress: 0,
     tokens: "—",
     elapsed: elapsedFromTimestamp(source.log_mtime, referenceTime),
     sandboxName: source.sandbox_name,
     branchName: source.branch,
-    messages: [{
-      id: `${source.sandbox_name}-connected`,
-      kind: "event",
-      label: "Live control plane",
-      body: `Connected to ${source.sandbox_name}. New log output streams into this thread.`,
-      time: "now",
-    }],
   };
 }
 
@@ -180,12 +184,21 @@ function projectFromSnapshot(snapshot: ControlPlaneSnapshot, baseline: BaselineS
     source: agent,
     normalized: normalizeLiveAgent(agent, referenceTime),
   }));
-  const main = agents.find(({ source }) => source.role === "main")?.normalized ?? placeholderAgent(
-    `live-${snapshot.project}-orchestrator`,
-    "Project orchestrator",
-    "orchestrator",
-    "Waiting for the main sandbox",
-  );
+  const main = agents.find(({ source }) => source.role === "main")?.normalized ?? {
+    ...placeholderAgent(
+      `live-${snapshot.project}-orchestrator`,
+      "Project orchestrator",
+      "orchestrator",
+      snapshot.project_state.status === "failed"
+        ? "Sandbox provisioning failed"
+        : "Waiting for the main sandbox",
+    ),
+    status: snapshot.project_state.status === "failed" ? "blocked" as const : "queued" as const,
+    sandboxName: snapshot.project_state.status === "idle" || snapshot.project_state.status === "stopped"
+      ? undefined
+      : `gtz-${snapshot.project}-hq-main`,
+    branchName: "main",
+  };
   const reconciler = agents.find(({ source }) => source.role === "reconciler")?.normalized ?? placeholderAgent(
     `live-${snapshot.project}-reconciler`,
     "Final reconciler",
@@ -218,15 +231,48 @@ function projectFromSnapshot(snapshot: ControlPlaneSnapshot, baseline: BaselineS
   return {
     ...base,
     id: `live-${snapshot.project}`,
+    projectName: snapshot.project,
     source: "live",
     name: `${humanize(snapshot.project)} · Live research`,
     shortName: humanize(snapshot.project),
-    objective: `Live hierarchical autoresearch run from the Blaxel sandbox registry. Target gain ${snapshot.research.target_gain_pct}% with at most ${snapshot.research.max_accuracy_loss_pct}% quality loss.`,
+    objective: snapshot.project_state.objective || `Live hierarchical autoresearch run from the Blaxel sandbox registry. Target gain ${snapshot.research.target_gain_pct}% with at most ${snapshot.research.max_accuracy_loss_pct}% quality loss.`,
     status: snapshot.agents.some((agent) => agent.running) ? "running" : "paused",
     createdAt: "Live from Blaxel",
     orchestrator: main,
     implementor: reconciler,
     teams,
+    lifecycle: snapshot.project_state.status,
+    lifecycleError: snapshot.project_state.error,
+  };
+}
+
+function optimisticProject(state: ResearchState, projectName: string, objective: string): Project | null {
+  const base = state.projects[0];
+  if (!base) return null;
+  const projectId = `live-${projectName}`;
+  return {
+    ...base,
+    id: projectId,
+    projectName,
+    source: "live",
+    name: `${humanize(projectName)} · Starting research`,
+    shortName: humanize(projectName),
+    objective,
+    status: "paused",
+    createdAt: "Provisioning now",
+    orchestrator: {
+      ...placeholderAgent(
+        `live-${projectName}-orchestrator`,
+        "Project orchestrator",
+        "orchestrator",
+        "Provisioning the main sandbox",
+      ),
+      sandboxName: `gtz-${projectName}-hq-main`,
+      branchName: "main",
+    },
+    teams: [],
+    lifecycle: "provisioning",
+    lifecycleError: null,
   };
 }
 
@@ -246,6 +292,37 @@ function reducer(state: ResearchState, action: Action): ResearchState {
       return { ...state, sidebarOpen: false };
     case "refresh-control-plane":
       return { ...state, controlPlaneRevision: state.controlPlaneRevision + 1 };
+    case "project-launch-requested": {
+      const project = optimisticProject(state, action.project, action.objective);
+      if (!project) return state;
+      return {
+        ...state,
+        projects: [project, ...state.projects.filter((candidate) => candidate.id !== project.id)],
+        selection: {
+          type: "agent",
+          projectId: project.id,
+          agentId: project.orchestrator.id,
+        },
+        expandedProjects: [project.id],
+      };
+    }
+    case "project-launch-failed":
+      return {
+        ...state,
+        projects: state.projects.map((project) => project.id === `live-${action.project}`
+          ? {
+              ...project,
+              status: "paused" as const,
+              lifecycle: "failed" as const,
+              lifecycleError: action.error,
+              orchestrator: {
+                ...project.orchestrator,
+                status: "blocked" as const,
+                task: "Sandbox provisioning failed",
+              },
+            }
+          : project),
+      };
     case "control-plane-error":
       return { ...state, controlPlane: { mode: "baseline", reason: action.reason } };
     case "control-plane-baseline": {
@@ -262,23 +339,14 @@ function reducer(state: ResearchState, action: Action): ResearchState {
       };
     }
     case "hydrate-control-plane": {
-      const wasLive = state.controlPlane.mode === "live";
-      if (action.snapshot.agents.length === 0) {
-        // A transient empty snapshot (registry hiccup mid-poll) must not evict a
-        // live project the user is looking at. Tolerate exactly one empty poll;
-        // a second consecutive one means the project is genuinely gone.
-        if (wasLive && state.projects[0]?.source === "live" && !state.controlPlane.sawEmptyPoll) {
-          return {
-            ...state,
-            controlPlane: {
-              mode: "live",
-              project: action.snapshot.project,
-              maxConcurrentPods: action.snapshot.budget.max_concurrent_pods,
-              githubConnected: action.snapshot.integrations.github,
-              sawEmptyPoll: true,
-            },
-          };
-        }
+      const liveSnapshots = action.snapshot.projects.filter((snapshot) =>
+        snapshot.agents.length > 0
+        || snapshot.project_state.status === "provisioning"
+        || snapshot.project_state.status === "running"
+        || snapshot.project_state.status === "failed");
+      const hasLiveProject = liveSnapshots.length > 0;
+      if (!hasLiveProject) {
+        if (state.projects[0]?.lifecycle === "provisioning") return state;
         const baseline = projectFromBaseline(action.baseline);
         return {
           ...state,
@@ -292,22 +360,41 @@ function reducer(state: ResearchState, action: Action): ResearchState {
             mode: "live",
             project: action.snapshot.project,
             maxConcurrentPods: action.snapshot.budget.max_concurrent_pods,
+            maxTeams: action.snapshot.caps.max_teams,
+            maxAgentsPerTeam: action.snapshot.caps.max_agents_per_team,
             githubConnected: action.snapshot.integrations.github,
           },
         };
       }
-      const normalized = projectFromSnapshot(action.snapshot, action.baseline);
-      const project = normalized;
+      const normalized = liveSnapshots.map((snapshot) => projectFromSnapshot(
+        {
+          ...action.snapshot,
+          project: snapshot.project,
+          project_state: snapshot.project_state,
+          agents: snapshot.agents,
+        },
+        action.baseline,
+      ));
+      const pending = state.projects.filter((project) =>
+        project.source === "live"
+        && (project.lifecycle === "provisioning" || project.lifecycle === "failed")
+        && !normalized.some((candidate) => candidate.id === project.id));
+      const projects = [...pending, ...normalized];
       return {
         ...state,
-        projects: [project],
-        selection: wasLive ? state.selection : { type: "project", projectId: project.id },
-        expandedProjects: [project.id],
-        expandedTeams: project.teams.map((team) => team.id),
+        projects,
+        selection: state.selection,
+        expandedProjects: Array.from(new Set([
+          ...state.expandedProjects,
+          ...projects.map((project) => project.id),
+        ])),
+        expandedTeams: projects.flatMap((project) => project.teams.map((team) => team.id)),
         controlPlane: {
           mode: "live",
           project: action.snapshot.project,
           maxConcurrentPods: action.snapshot.budget.max_concurrent_pods,
+          maxTeams: action.snapshot.caps.max_teams,
+          maxAgentsPerTeam: action.snapshot.caps.max_agents_per_team,
           githubConnected: action.snapshot.integrations.github,
         },
       };

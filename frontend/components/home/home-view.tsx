@@ -5,7 +5,7 @@ import { motion } from "motion/react";
 import { ArrowRight, Gauge, Plus, Sparkles, WandSparkles } from "lucide-react";
 import { BrandMark } from "@/components/shared/brand-mark";
 import { StatusPill } from "@/components/shared/status";
-import { sendSteeringMessage, startResearchProject } from "@/lib/control-plane-client";
+import { startResearchProject } from "@/lib/control-plane-client";
 import { useResearchDispatch, useResearchState } from "@/store/research-store";
 
 const starterPrompts = [
@@ -14,6 +14,11 @@ const starterPrompts = [
   "Cut KV-cache memory without quality loss",
 ];
 
+function projectIdFor(objective: string) {
+  const base = objective.toLowerCase().replace(/[^a-z0-9]+/g, "").slice(0, 17) || "research";
+  return `${base}${crypto.randomUUID().replaceAll("-", "").slice(0, 6)}`;
+}
+
 export function HomeView({ mode }: { mode: "home" | "new-project" }) {
   const { projects, controlPlane } = useResearchState();
   const dispatch = useResearchDispatch();
@@ -21,9 +26,12 @@ export function HomeView({ mode }: { mode: "home" | "new-project" }) {
   const [launching, setLaunching] = useState(false);
   const [launchError, setLaunchError] = useState<string | null>(null);
   const liveProject = projects.find((project) => project.source === "live");
-  const liveOrchestrator = liveProject?.orchestrator.sandboxName ? liveProject.orchestrator : null;
+  const liveOrchestrator = liveProject?.orchestrator.sandboxName
+    && liveProject.lifecycle !== "failed"
+    && liveProject.lifecycle !== "stopped"
+    ? liveProject.orchestrator
+    : null;
   const isCreating = mode === "new-project";
-  const creationBlocked = isCreating && Boolean(liveProject);
 
   async function launch(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -31,35 +39,34 @@ export function HomeView({ mode }: { mode: "home" | "new-project" }) {
     if (!trimmed || launching) return;
     setLaunchError(null);
     if (!isCreating && liveProject && liveOrchestrator?.sandboxName) {
-      setLaunching(true);
-      try {
-        await sendSteeringMessage(liveOrchestrator.sandboxName, trimmed);
-        setObjective("");
-        dispatch({ type: "select", selection: { type: "agent", projectId: liveProject.id, agentId: liveOrchestrator.id } });
-      } catch (error) {
-        setLaunchError(error instanceof Error ? error.message : "The orchestrator could not be reached.");
-      } finally {
-        setLaunching(false);
-      }
+      const clientId = crypto.randomUUID();
+      setObjective("");
+      dispatch({
+        type: "select",
+        selection: {
+          type: "agent",
+          projectId: liveProject.id,
+          agentId: liveOrchestrator.id,
+          initialMessage: { clientId, body: trimmed, mode: "queue" },
+        },
+      });
       return;
     }
-    if (creationBlocked) {
-      setLaunchError("This control plane is pinned to one repository and already has an active project. The current orchestrator was not messaged.");
-      return;
-    }
-    if (controlPlane.mode !== "live") {
+    if (controlPlane.mode !== "live" || !controlPlane.project) {
       setLaunchError("The live control plane is not connected. Check groktimizer.toml and the local Blaxel credentials.");
       return;
     }
 
     setLaunching(true);
+    const projectName = isCreating ? projectIdFor(trimmed) : controlPlane.project;
+    dispatch({ type: "project-launch-requested", project: projectName, objective: trimmed });
+    setObjective("");
     try {
-      await startResearchProject(trimmed);
-      setObjective("");
+      await startResearchProject(trimmed, projectName);
       dispatch({ type: "refresh-control-plane" });
-      dispatch({ type: "select", selection: { type: "project", projectId: `live-${controlPlane.project}` } });
     } catch (error) {
-      setLaunchError(error instanceof Error ? error.message : "The main orchestrator could not be started.");
+      const message = error instanceof Error ? error.message : "The main orchestrator could not be started.";
+      dispatch({ type: "project-launch-failed", project: projectName, error: message });
     } finally {
       setLaunching(false);
     }
@@ -90,9 +97,7 @@ export function HomeView({ mode }: { mode: "home" | "new-project" }) {
         <p className="eyebrow">Groktimizer / {isCreating ? "New project" : liveOrchestrator ? "Live effort" : "New effort"}</p>
         <h1>{isCreating ? <>Start a separate<br />research project</> : liveOrchestrator ? <>What should the lab<br />do next?</> : <>What should the lab<br />make faster?</>}</h1>
         <p className="hero-subtitle">
-          {creationBlocked
-            ? "This hackathon control plane is pinned to one repository and one active project. Finish or archive Groktimizer before launching another; this composer will never reuse its thread."
-            : liveOrchestrator
+          {liveOrchestrator && !isCreating
               ? "Steer the existing main orchestrator. Your message resumes its live Grok session; no additional project is created."
               : "Give the orchestrator an objective. It will build teams, run experiments, challenge results, and prepare the winning patch."}
         </p>
@@ -108,8 +113,7 @@ export function HomeView({ mode }: { mode: "home" | "new-project" }) {
                 event.currentTarget.form?.requestSubmit();
               }
             }}
-            placeholder={creationBlocked ? "One active project is already attached to this repository" : !isCreating && liveOrchestrator ? "Ask or steer the main orchestrator…" : "Describe a measurable optimization objective…"}
-            disabled={creationBlocked}
+            placeholder={!isCreating && liveOrchestrator ? "Ask or steer the main orchestrator…" : "Describe a measurable optimization objective…"}
             rows={3}
           />
           <div className="composer-toolbar">
@@ -117,8 +121,8 @@ export function HomeView({ mode }: { mode: "home" | "new-project" }) {
               <button type="button" className="tool-chip"><Plus size={14} /> Context</button>
               <button type="button" className="tool-chip"><Gauge size={14} /> TTFT</button>
             </div>
-            <button className="launch-button" type="submit" disabled={creationBlocked || !objective.trim() || launching}>
-              {creationBlocked ? "New project unavailable" : launching ? (!isCreating && liveOrchestrator ? "Sending…" : "Starting orchestrator…") : (!isCreating && liveOrchestrator ? "Steer orchestrator" : "Launch")} <ArrowRight size={15} />
+            <button className="launch-button" type="submit" disabled={!objective.trim() || launching}>
+              {launching ? (!isCreating && liveOrchestrator ? "Sending…" : "Starting orchestrator…") : (!isCreating && liveOrchestrator ? "Steer orchestrator" : "Launch")} <ArrowRight size={15} />
             </button>
           </div>
         </form>
@@ -134,7 +138,7 @@ export function HomeView({ mode }: { mode: "home" | "new-project" }) {
 
         <div className="starter-row" aria-label="Starter objectives">
           {starterPrompts.map((prompt) => (
-            <button key={prompt} onClick={() => setObjective(prompt)} disabled={creationBlocked}>
+            <button key={prompt} onClick={() => setObjective(prompt)}>
               <WandSparkles size={13} /> {prompt}
             </button>
           ))}

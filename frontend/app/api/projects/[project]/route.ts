@@ -21,15 +21,17 @@ export async function DELETE(
 
   try {
     const before = JSON.parse(await runGtz(["snapshot"])) as ControlPlaneSnapshot;
-    if (before.project !== project) {
+    const beforeProject = before.projects.find((candidate) => candidate.project === project);
+    if (!beforeProject) {
       return NextResponse.json({ error: "Project is not attached to this control plane" }, { status: 404 });
     }
 
-    await runGtz(["stop"], 120_000);
+    await runGtz(["stop", "--project", project], 120_000);
     for (let attempt = 0; attempt < 8; attempt += 1) {
       const current = JSON.parse(await runGtz(["snapshot"])) as ControlPlaneSnapshot;
-      if (current.agents.length === 0) {
-        return NextResponse.json({ deleted: true, project, sandboxes: before.agents.length });
+      const currentProject = current.projects.find((candidate) => candidate.project === project);
+      if (!currentProject || currentProject.agents.length === 0) {
+        return NextResponse.json({ deleted: true, project, sandboxes: beforeProject.agents.length });
       }
       await new Promise((resolve) => setTimeout(resolve, 1_000));
     }

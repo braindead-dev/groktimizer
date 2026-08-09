@@ -2,108 +2,150 @@
 
 import json
 import shlex
-from datetime import UTC, datetime
+from pathlib import Path
 from uuid import uuid4
 
 from groktimizer.core.sandbox import SandboxClient
 
-LOG = "/var/log/gtz/session.log"
-CHAT_LOG = "/var/log/gtz/chat.jsonl"
+RUNNER = "/opt/gtz/agent_runner.py"
+RUNNER_LOG = "/var/log/gtz/runner.log"
+
+
+def _last_json(stdout: str) -> dict | None:
+    for line in reversed(stdout.splitlines()):
+        try:
+            value = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(value, dict):
+            return value
+    return None
 
 
 async def agent_status(client: SandboxClient, name: str) -> dict:
     r = await client.exec(
         name,
-        f"tmux has-session -t gtz 2>/dev/null && echo running; stat -c %Y {LOG} 2>/dev/null",
+        f"tmux has-session -t gtz 2>/dev/null && echo running; "
+        f"python3 {RUNNER} status 2>/dev/null || true; "
+        f"stat -c %Y {RUNNER_LOG} 2>/dev/null",
     )
     lines = r.stdout.split()
     running = "running" in lines
     mtimes = [tok for tok in lines if tok.isdigit()]
-    return {"running": running, "log_mtime": int(mtimes[0]) if mtimes else None}
+    runtime = _last_json(r.stdout) or {}
+    return {
+        "running": running,
+        "log_mtime": int(mtimes[-1]) if mtimes else None,
+        "turn_status": runtime.get("turn_status", "idle" if running else "stopped"),
+        "active_turn_id": runtime.get("active_turn_id"),
+        "queued": runtime.get("queued", 0),
+        "cursor": runtime.get("cursor", 0),
+        "session_id": runtime.get("session_id"),
+        "runtime_id": runtime.get("runtime_id"),
+    }
 
 
 async def tail_log(client: SandboxClient, name: str, lines: int = 50) -> str:
-    r = await client.exec(name, f"tail -n {int(lines)} {LOG}")
+    r = await client.exec(
+        name,
+        f"tail -n {int(lines)} {RUNNER_LOG} 2>/dev/null || true",
+    )
     return r.stdout
 
 
-async def tail_messages(client: SandboxClient, name: str, lines: int = 80) -> list[dict[str, str]]:
-    r = await client.exec(name, f"tail -n {int(lines)} {CHAT_LOG} 2>/dev/null || true")
-    messages = []
-    for line in r.stdout.splitlines():
-        try:
-            message = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        if (
-            isinstance(message, dict)
-            and isinstance(message.get("id"), str)
-            and isinstance(message.get("body"), str)
-            and isinstance(message.get("at"), str)
-        ):
-            role = message.get("role")
-            messages.append(
-                {
-                    "id": message["id"],
-                    "role": role if role in ("user", "agent") else "user",
-                    "body": message["body"],
-                    "at": message["at"],
-                }
-            )
-    return messages
-
-
-# Appends the resumed grok run's final response to chat.jsonl as a structured
-# agent reply, so chat is two-way instead of steering-only. Runs in the sandbox.
-_APPEND_REPLY_PY = (
-    "import json,sys,uuid,datetime as dt\n"
-    "body=open(sys.argv[1]).read().strip()\n"
-    "rec={'id':'reply-'+uuid.uuid4().hex,'role':'agent','body':body,"
-    "'at':dt.datetime.now(dt.timezone.utc).isoformat()}\n"
-    f"body and open({CHAT_LOG!r},'a').write(json.dumps(rec)+chr(10))\n"
-)
-
-
-async def send_message(client: SandboxClient, name: str, message: str) -> str:
-    """Steer an agent. Returns the chat message id of the steering record."""
-    # Steering replaces the current headless turn, then resumes the same session from
-    # the project clone. Keeping the process inside the named tmux session preserves
-    # accurate liveness reporting for the CLI and web control plane. The run's stdout
-    # is teed to the session log AND captured so the reply lands in chat.jsonl.
-    script = (
-        "{ . /opt/gtz/.env; } 2>/dev/null; "
-        'export PATH="$HOME/.local/bin:$HOME/.grok/bin:$PATH"; '
-        "export GIT_ASKPASS=/opt/gtz/git-askpass.sh GIT_TERMINAL_PROMPT=0; "
-        "cd /workspace/project; "
-        'reply_file=$(mktemp /tmp/gtz-reply.XXXXXX); '
-        # The trap also fires when the NEXT steering message kills this session,
-        # so an interrupted turn still lands its partial output as a chat reply
-        # instead of vanishing (a rapid message burst previously yielded nothing).
-        f'trap \'python3 -c {shlex.quote(_APPEND_REPLY_PY)} "$reply_file"; '
-        'rm -f "$reply_file"\' EXIT HUP TERM; '
-        "grok --continue --always-approve "
-        '${GTZ_GROK_MODEL:+--model "$GTZ_GROK_MODEL"} '
-        '${GTZ_REASONING_EFFORT:+--reasoning-effort "$GTZ_REASONING_EFFORT"} '
-        f'-p "$0" 2>&1 | tee -a {LOG} > "$reply_file"'
+async def runtime_snapshot(client: SandboxClient, name: str, after: int = 0) -> dict | None:
+    r = await client.exec(
+        name,
+        f"python3 {RUNNER} export --after {max(0, int(after))} 2>/dev/null || true",
     )
-    resume = shlex.join(["bash", "-lc", script, message])
-    message_id = f"steer-{uuid4().hex}"
-    chat_event = json.dumps(
-        {
-            "id": message_id,
-            "role": "user",
-            "body": message,
-            "at": datetime.now(UTC).isoformat(),
-        },
-        separators=(",", ":"),
+    return _last_json(r.stdout)
+
+
+async def send_message(
+    client: SandboxClient,
+    name: str,
+    message: str,
+    *,
+    mode: str = "queue",
+    client_id: str | None = None,
+    sender_kind: str = "operator",
+    sender_sandbox: str | None = None,
+    sender_label: str | None = None,
+    retry: bool = False,
+) -> dict:
+    """Queue or interrupt with a steering turn in the sandbox-local runner."""
+    if mode not in {"queue", "interrupt"}:
+        raise ValueError("mode must be queue or interrupt")
+    if not message.strip() or len(message) > 4_000:
+        raise ValueError("message must contain 1-4,000 characters")
+    client_id = client_id or f"client-{uuid4().hex}"
+    turn_id = f"turn-{uuid4().hex}"
+    args = [
+        "python3",
+        RUNNER,
+        "enqueue",
+        "--message",
+        message,
+        "--client-id",
+        client_id,
+        "--turn-id",
+        turn_id,
+        "--mode",
+        mode,
+        "--sender-kind",
+        sender_kind,
+    ]
+    if sender_sandbox:
+        args.extend(["--sender-sandbox", sender_sandbox])
+    if sender_label:
+        args.extend(["--sender-label", sender_label])
+    if retry:
+        args.append("--retry-existing")
+    start_runner = (
+        "tmux has-session -t gtz 2>/dev/null || "
+        "tmux new-session -d -s gtz "
+        + shlex.quote(
+            "{ . /opt/gtz/.env; } 2>/dev/null; "
+            'export PATH="$HOME/.local/bin:$HOME/.grok/bin:$PATH"; '
+            "export GIT_ASKPASS=/opt/gtz/git-askpass.sh GIT_TERMINAL_PROMPT=0; "
+            "cd /workspace/project; "
+            f"exec python3 {RUNNER} daemon >>{RUNNER_LOG} 2>&1"
+        )
     )
-    command = (
+    r = await client.exec(name, f"{start_runner}; {shlex.join(args)}")
+    result = _last_json(r.stdout)
+    if r.exit_code != 0 or not result:
+        raise RuntimeError("agent turn runner is unavailable; repair the sandbox first")
+    return result
+
+
+async def repair_runtime(client: SandboxClient, name: str) -> dict:
+    """Restart a current queued runner while preserving its recorded Grok session."""
+    runtime = await runtime_snapshot(client, name)
+    if not runtime or not runtime.get("runtime_id") or not runtime.get("session_id"):
+        raise RuntimeError("unsupported agent runner; recreate the sandbox")
+    source = Path(__file__).with_name("agent_runner.py").read_text()
+    await client.exec(name, "mkdir -p /opt/gtz /var/lib/gtz /var/log/gtz")
+    await client.write_file(name, RUNNER, source)
+    session_id = str(runtime["session_id"])
+    init = shlex.join(["python3", RUNNER, "init", "--session-id", session_id, "--started"])
+    start = (
         "tmux kill-session -t gtz 2>/dev/null || true; "
-        f"printf '%s\\n' {shlex.quote(chat_event)} >> {CHAT_LOG}; "
-        f"tmux new-session -d -s gtz {shlex.quote(resume)}"
+        f"if [ -s {RUNNER_LOG} ]; then mv {RUNNER_LOG} {RUNNER_LOG}.previous; fi; "
+        f"touch {RUNNER_LOG}; : > {RUNNER_LOG}; "
+        "tmux new-session -d -s gtz "
+        + shlex.quote(
+            "{ . /opt/gtz/.env; } 2>/dev/null; "
+            'export PATH="$HOME/.local/bin:$HOME/.grok/bin:$PATH"; '
+            "export GIT_ASKPASS=/opt/gtz/git-askpass.sh GIT_TERMINAL_PROMPT=0; "
+            "cd /workspace/project; "
+            f"exec python3 {RUNNER} daemon >>{RUNNER_LOG} 2>&1"
+        )
     )
-    await client.exec(name, command)
-    return message_id
+    r = await client.exec(name, f"chmod 700 {RUNNER}; {init}; {start}")
+    if r.exit_code != 0:
+        raise RuntimeError("failed to repair the agent turn runner")
+    return {"repaired": True, "session_id": session_id}
 
 
 async def exec_in_agent(

@@ -1,4 +1,4 @@
-"""Pull chat messages and session-log deltas from agent sandboxes into the store.
+"""Pull structured turn and event deltas from agent sandboxes into the store.
 
 Piggybacks on existing polling (gtz snapshot every 10s from the UI; gtz watch at
 1s while a chat is open) — no separate daemon. Ingest failures never propagate:
@@ -10,37 +10,66 @@ from groktimizer.core.registry import AgentInfo
 from groktimizer.core.sandbox import SandboxClient
 from groktimizer.core.store import Store
 
-MAX_CHUNK_BYTES = 64_000
 
-
-async def ingest_agent(store: Store, client: SandboxClient, agent: AgentInfo) -> None:
+async def ingest_agent(store: Store, client: SandboxClient, agent: AgentInfo) -> str | None:
     sandbox = agent.sandbox_name
-    store.upsert_agent(sandbox, project=agent.project, team=agent.team,
-                       name=agent.agent, role=agent.role)
+    store.upsert_agent(
+        sandbox, project=agent.project, team=agent.team, name=agent.agent, role=agent.role
+    )
     try:
-        messages = await monitor.tail_messages(client, sandbox, lines=200)
-        if messages:
-            store.insert_messages(
-                [{**message, "sandbox": sandbox} for message in messages]
+        cursor = store.get_event_cursor(sandbox)
+        previous_runtime = store.runtime_for(sandbox)
+        runtime = await monitor.runtime_snapshot(client, sandbox, after=cursor)
+        if not runtime:
+            return "agent runner unavailable; recreate the sandbox"
+        if not runtime.get("runtime_id"):
+            return "unsupported legacy agent runner; recreate the sandbox"
+        previous_runtime_id = previous_runtime.get("runtime_id")
+        current_runtime_id = runtime.get("runtime_id")
+        previous_session = previous_runtime.get("session_id")
+        current_session = runtime.get("session_id")
+        if (
+            previous_runtime_id and current_runtime_id and previous_runtime_id != current_runtime_id
+        ) or (previous_session and current_session and previous_session != current_session):
+            store.reset_conversation(sandbox, str(current_runtime_id or ""))
+            cursor = 0
+            runtime = await monitor.runtime_snapshot(client, sandbox, after=0)
+        if runtime:
+            events = runtime.get("events", [])
+            event_revisions: dict[str, int] = {}
+            for event in events:
+                event_revisions[event["turn_id"]] = max(
+                    event_revisions.get(event["turn_id"], 0), int(event["seq"])
+                )
+            turns = [
+                {
+                    **turn,
+                    "revision": max(
+                        int(turn.get("revision", 0)),
+                        event_revisions.get(turn["id"], int(runtime.get("cursor", 0))),
+                    ),
+                }
+                for turn in runtime.get("turns", [])
+            ]
+            store.upsert_turns(sandbox, turns)
+            store.insert_turn_events(sandbox, events)
+            next_cursor = int(runtime.get("cursor", cursor))
+            store.set_event_cursor(sandbox, max(cursor, next_cursor))
+            store.set_runtime(
+                sandbox,
+                {
+                    key: runtime.get(key)
+                    for key in (
+                        "session_id",
+                        "runtime_id",
+                        "active_turn_id",
+                        "turn_status",
+                        "queued",
+                        "cursor",
+                    )
+                },
             )
+        return None
 
-        size_result = await client.exec(
-            sandbox, f"wc -c {monitor.LOG} 2>/dev/null || echo 0"
-        )
-        size_token = size_result.stdout.split()[0] if size_result.stdout.split() else "0"
-        log_size = int(size_token) if size_token.isdigit() else 0
-        offset = store.get_log_offset(sandbox)
-        if log_size < offset:
-            offset = 0  # log truncated (sandbox restart): re-read from the start
-        if log_size > offset:
-            span = min(log_size - offset, MAX_CHUNK_BYTES)
-            chunk = await client.exec(
-                sandbox, f"tail -c +{offset + 1} {monitor.LOG} | head -c {span}"
-            )
-            if chunk.stdout:
-                store.append_log_chunk(sandbox, chunk.stdout)
-            store.set_log_offset(sandbox, offset + span)
-        elif log_size != store.get_log_offset(sandbox):
-            store.set_log_offset(sandbox, log_size)
-    except Exception:
-        return  # sandbox unreachable this tick; next poll retries
+    except Exception as error:  # noqa: BLE001 — unreachable sandboxes retry on the next poll
+        return str(error)

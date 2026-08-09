@@ -27,7 +27,7 @@ def sweep_pods(rp, name_prefix: str) -> list[str]:
             try:
                 rp.terminate_pod(pod["id"])
                 terminated.append(pod["id"])
-            except Exception:  # noqa: BLE001 — best effort; report what we killed
+            except Exception:  # noqa: BLE001,S112 — best effort; report what we killed
                 continue
     return terminated
 

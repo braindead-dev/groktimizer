@@ -136,7 +136,7 @@ def build_server() -> FastMCP:
 
     @mcp.tool()
     async def tail_agent(sandbox: str, lines: int = 50) -> str:
-        """Read the last N lines of a subordinate's session log."""
+        """Read the last N lines of a subordinate runner's diagnostic log."""
         check_manage(
             actor_role=role,
             actor_team=my_team,
@@ -152,11 +152,21 @@ def build_server() -> FastMCP:
         return await monitor.exec_in_agent(client, sandbox, command)
 
     @mcp.tool()
-    async def send_to_agent(sandbox: str, message: str) -> str:
-        """Send a steering message to a subordinate (resumes its grok session)."""
+    async def send_to_agent(sandbox: str, message: str, mode: str = "queue") -> dict:
+        """Steer a subordinate. Queue by default; mode='interrupt' stops its active turn."""
         check_manage(actor_role=role, actor_team=my_team, target_team=_team_of(sandbox))
-        await monitor.send_message(client, sandbox, message)
-        return "sent"
+        if mode not in {"queue", "interrupt"}:
+            raise ValueError("mode must be 'queue' or 'interrupt'")
+        return await monitor.send_message(
+            client,
+            sandbox,
+            message,
+            mode=mode,
+            sender_kind="agent",
+            sender_sandbox=os.environ.get("GTZ_SANDBOX")
+            or f"gtz-{cfg.project}-{my_team}-{os.environ.get('GTZ_AGENT', 'unknown')}",
+            sender_label=os.environ.get("GTZ_AGENT", role),
+        )
 
     @mcp.tool()
     async def terminate_agent(sandbox: str) -> str:

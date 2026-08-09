@@ -4,16 +4,15 @@ import { useState } from "react";
 import { ArrowDownRight, ArrowUpRight, Check, ChevronRight, Cpu, Database, GitCommitHorizontal, Network, Radio, Sparkles, Trash2, X } from "lucide-react";
 import { KpiChart } from "@/components/charts/kpi-chart";
 import { StatusDot, StatusPill } from "@/components/shared/status";
-import { deleteResearchProject } from "@/lib/control-plane-client";
+import { stopResearchProject } from "@/lib/control-plane-client";
 import type { Project } from "@/lib/types";
-import { useResearchDispatch, useResearchState } from "@/store/research-store";
+import { useResearchDispatch } from "@/store/research-store";
 
 export function ProjectOverview({ project }: { project: Project }) {
   const dispatch = useResearchDispatch();
-  const { controlPlane } = useResearchState();
-  const [confirmingDelete, setConfirmingDelete] = useState(false);
-  const [deleting, setDeleting] = useState(false);
-  const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [confirmingStop, setConfirmingStop] = useState(false);
+  const [stopping, setStopping] = useState(false);
+  const [stopError, setStopError] = useState<string | null>(null);
   const lowerIsBetter = project.unit === "ms";
   const delta = project.baseline ? ((project.best - project.baseline) / project.baseline) * 100 : 0;
   const displayDelta = `${delta > 0 ? "+" : ""}${delta.toFixed(1)}%`;
@@ -28,17 +27,17 @@ export function ProjectOverview({ project }: { project: Project }) {
       : { label: "Result source", value: "JSON", unit: "", detail: "committed repository artifacts" },
   ];
 
-  async function removeProject() {
-    if (project.source !== "live" || !controlPlane.project || deleting) return;
-    setDeleting(true);
-    setDeleteError(null);
+  async function stopProject() {
+    if (project.source !== "live" || !project.projectName || stopping) return;
+    setStopping(true);
+    setStopError(null);
     try {
-      await deleteResearchProject(controlPlane.project);
+      await stopResearchProject(project.projectName);
       dispatch({ type: "select", selection: { type: "new-project" } });
       dispatch({ type: "refresh-control-plane" });
     } catch (error) {
-      setDeleteError(error instanceof Error ? error.message : "Project deletion failed.");
-      setDeleting(false);
+      setStopError(error instanceof Error ? error.message : "The research run could not be stopped.");
+      setStopping(false);
     }
   }
 
@@ -59,21 +58,22 @@ export function ProjectOverview({ project }: { project: Project }) {
               Open orchestrator <ArrowUpRight size={15} />
             </button>
           ) : <span className="baseline-source"><Database size={13} /> Recorded baseline · results/*.json</span>}
-          {project.source === "live" && controlPlane.project ? (
-            confirmingDelete ? (
-              <div className="delete-confirm" role="group" aria-label="Confirm project deletion">
-                <button aria-label="Cancel deletion" onClick={() => setConfirmingDelete(false)} disabled={deleting}><X size={14} /></button>
-                <button className="danger-action" onClick={removeProject} disabled={deleting}>
-                  {deleting ? "Deleting…" : `Delete ${registeredAgents.length} sandboxes`}
+          {project.source === "live" && project.projectName ? (
+            confirmingStop ? (
+              <div className="delete-confirm" role="group" aria-label="Confirm stopping research">
+                <span>Stops every agent and frees project, team, and GPU slots. Git branches remain.</span>
+                <button aria-label="Cancel stopping" onClick={() => setConfirmingStop(false)} disabled={stopping}><X size={14} /></button>
+                <button className="danger-action" onClick={stopProject} disabled={stopping}>
+                  {stopping ? "Stopping…" : `Stop ${registeredAgents.length} sandboxes`}
                 </button>
               </div>
             ) : (
-              <button className="delete-project-action" onClick={() => setConfirmingDelete(true)}>
-                <Trash2 size={13} /> Delete project
+              <button className="delete-project-action" onClick={() => setConfirmingStop(true)}>
+                <Trash2 size={13} /> Stop research run
               </button>
             )
           ) : null}
-          {deleteError ? <p className="delete-project-error" role="alert">{deleteError}</p> : null}
+          {stopError ? <p className="delete-project-error" role="alert">{stopError}</p> : null}
         </div>
       </header>
 

@@ -1,17 +1,35 @@
-import shlex
+import json
 
-from groktimizer.core.monitor import agent_status, send_message, tail_log, tail_messages
+import pytest
+
+from groktimizer.core.monitor import (
+    agent_status,
+    repair_runtime,
+    runtime_snapshot,
+    send_message,
+    tail_log,
+)
 from groktimizer.core.sandbox import ExecResult
 from tests.fakes import FakeSandboxClient
 
 NAME = "gtz-demo-attn-impl-1"
 
 
-async def test_status_running():
+async def test_status_running_with_turn_state():
     client = FakeSandboxClient()
-    client.exec_responses["tmux has-session"] = ExecResult(stdout="running\n", exit_code=0)
+    client.exec_responses["tmux has-session"] = ExecResult(
+        stdout=(
+            "running\n"
+            '{"session_id":"s1","cursor":4,"active_turn_id":"turn-1",'
+            '"turn_status":"running","queued":2}\n'
+            "1723123456\n"
+        ),
+        exit_code=0,
+    )
     status = await agent_status(client, NAME)
     assert status["running"] is True
+    assert status["turn_status"] == "running"
+    assert status["queued"] == 2
 
 
 async def test_tail():
@@ -20,45 +38,105 @@ async def test_tail():
     assert await tail_log(client, NAME, lines=5) == "last lines"
 
 
-async def test_tail_messages_ignores_invalid_lines_and_defaults_role():
+async def test_runtime_snapshot_uses_cursor():
     client = FakeSandboxClient()
-    client.exec_responses["tail -n"] = ExecResult(
+    client.exec_responses["agent_runner.py export"] = ExecResult(
+        stdout='{"cursor":7,"turns":[],"events":[]}\n',
+        exit_code=0,
+    )
+    result = await runtime_snapshot(client, NAME, after=4)
+    assert result["cursor"] == 7
+    assert "--after 4" in client.execs[-1][1]
+
+
+async def test_send_queues_safely_and_is_idempotent():
+    client = FakeSandboxClient()
+    response = {
+        "id": "turn-1",
+        "client_id": "client-1",
+        "prompt": "fix the bug",
+        "display_prompt": "fix the bug",
+        "mode": "queue",
+        "sender_kind": "operator",
+        "sender_sandbox": None,
+        "sender_label": None,
+        "status": "queued",
+        "priority": 10,
+        "created_at": "2026-01-01T00:00:00Z",
+        "started_at": None,
+        "finished_at": None,
+        "error": None,
+    }
+    client.exec_responses["agent_runner.py enqueue"] = ExecResult(
+        stdout=json.dumps(response) + "\n",
+        exit_code=0,
+    )
+    message = "fix the $bug; rm -rf isn't run"
+    result = await send_message(client, NAME, message, client_id="client-1")
+    assert result["id"] == "turn-1"
+    command = client.execs[-1][1]
+    assert "--message 'fix the $bug; rm -rf isn'\"'\"'t run'" in command
+    assert "--client-id client-1" in command
+    assert "--resume" not in command
+    assert "chat.jsonl" not in command
+
+
+async def test_send_interrupt_and_provenance():
+    client = FakeSandboxClient()
+    response = {
+        "id": "turn-2",
+        "client_id": "client-2",
+        "prompt": "change direction",
+        "display_prompt": "change direction",
+        "mode": "interrupt",
+        "sender_kind": "agent",
+        "sender_sandbox": "gtz-demo-hq-main",
+        "sender_label": "main",
+        "status": "queued",
+        "priority": 0,
+        "created_at": "2026-01-01T00:00:00Z",
+        "started_at": None,
+        "finished_at": None,
+        "error": None,
+    }
+    client.exec_responses["agent_runner.py enqueue"] = ExecResult(
+        stdout=json.dumps(response) + "\n",
+        exit_code=0,
+    )
+    await send_message(
+        client,
+        NAME,
+        "change direction",
+        mode="interrupt",
+        client_id="client-2",
+        sender_kind="agent",
+        sender_sandbox="gtz-demo-hq-main",
+        sender_label="main",
+    )
+    command = client.execs[-1][1]
+    assert "--mode interrupt" in command
+    assert "--sender-sandbox gtz-demo-hq-main" in command
+
+
+async def test_repair_requires_current_runtime():
+    client = FakeSandboxClient()
+    client.exec_responses["agent_runner.py export"] = ExecResult(
+        stdout='{"session_id":"old-session","cursor":0}\n', exit_code=0
+    )
+    with pytest.raises(RuntimeError, match="unsupported agent runner"):
+        await repair_runtime(client, NAME)
+
+
+async def test_repair_restarts_current_runtime_without_session_discovery():
+    client = FakeSandboxClient()
+    client.exec_responses["agent_runner.py export"] = ExecResult(
         stdout=(
-            '{"id":"steer-1","body":"hello","at":"2026-08-08T12:00:00Z"}\n'
-            "not-json\n"
-            '{"id":"reply-1","role":"agent","body":"done","at":"2026-08-08T12:00:05Z"}\n'
+            '{"runtime_id":"runtime-1","session_id":"session-1",'
+            '"cursor":0,"turns":[],"events":[]}\n'
         ),
         exit_code=0,
     )
-    assert await tail_messages(client, NAME) == [
-        {"id": "steer-1", "role": "user", "body": "hello", "at": "2026-08-08T12:00:00Z"},
-        {"id": "reply-1", "role": "agent", "body": "done", "at": "2026-08-08T12:00:05Z"},
-    ]
-
-
-async def test_send_quotes_message():
-    client = FakeSandboxClient()
-    message = "fix the $bug; rm -rf isn't run"
-    message_id = await send_message(client, NAME, message)
-    assert message_id.startswith("steer-")
-    _, cmd = client.execs[-1]
-    tmux_command = shlex.split(cmd.split("tmux new-session", 1)[1])
-    resume_command = shlex.split(tmux_command[-1])
-    assert resume_command[-1] == message
-    assert "--continue" in cmd
-    assert "tmux kill-session" in cmd
-    assert "tmux new-session" in cmd
-    assert "/var/log/gtz/chat.jsonl" in cmd
-    assert "GIT_ASKPASS" in cmd
-    # the steering record carries the user role and the returned id
-    assert '"role":"user"' in cmd
-    assert message_id in cmd
-
-
-async def test_send_captures_agent_reply():
-    client = FakeSandboxClient()
-    await send_message(client, NAME, "status?")
-    _, cmd = client.execs[-1]
-    # the resumed grok run must tee its stdout and append it as a reply-* chat record
-    assert "reply-" in cmd
-    assert "tee -a /var/log/gtz/session.log" in cmd
+    result = await repair_runtime(client, NAME)
+    assert result == {"repaired": True, "session_id": "session-1"}
+    assert any("--session-id session-1 --started" in command for _, command in client.execs)
+    assert not any(".grok/sessions" in command for _, command in client.execs)

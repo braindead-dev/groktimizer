@@ -3,6 +3,7 @@
 import asyncio
 import json
 import os
+import re
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -14,7 +15,7 @@ from groktimizer.core import monitor
 from groktimizer.core.bootstrap import PASSTHROUGH_ENVS, spawn_agent
 from groktimizer.core.gpu import BudgetedRunPod
 from groktimizer.core.ingest import ingest_agent
-from groktimizer.core.registry import AgentInfo, Registry, active_projects
+from groktimizer.core.registry import AgentInfo, Registry
 from groktimizer.core.sandbox import MAIN_TEAM, branch_name
 from groktimizer.core.store import Store
 
@@ -34,8 +35,8 @@ def _client(cfg: Config):
 
 
 def _require_project_sandbox(cfg: Config, sandbox: str) -> None:
-    if not sandbox.startswith(f"gtz-{cfg.project}-"):
-        raise typer.BadParameter("sandbox does not belong to the configured project")
+    if not re.fullmatch(r"gtz-[a-z0-9]{1,24}-[a-z0-9]{1,24}-[a-z0-9-]{1,24}", sandbox):
+        raise typer.BadParameter("invalid groktimizer sandbox name")
 
 
 def format_tree(agents: list[AgentInfo]) -> str:
@@ -54,12 +55,6 @@ async def start_main_orchestrator(
     agents = await Registry(client, cfg.project).list_agents()
     if any(agent.role == "main" for agent in agents):
         raise ValueError(f"main orchestrator already exists for project {cfg.project}")
-    live_projects = await active_projects(client)
-    if cfg.project not in live_projects and len(live_projects) >= cfg.caps.max_active_projects:
-        raise ValueError(
-            f"active project cap reached ({cfg.caps.max_active_projects}): "
-            f"{', '.join(live_projects)} — stop one first"
-        )
     name = await spawn_agent(
         cfg,
         client,
@@ -70,9 +65,8 @@ async def start_main_orchestrator(
         extra_envs=envs,
     )
     if store is not None:
-        store.upsert_project(cfg.project, objective=brief)
-        store.upsert_agent(name, project=cfg.project, team=MAIN_TEAM,
-                           name="main", role="main")
+        store.upsert_project(cfg.project, objective=brief, status="running")
+        store.upsert_agent(name, project=cfg.project, team=MAIN_TEAM, name="main", role="main")
     return name
 
 
@@ -80,21 +74,43 @@ async def collect_snapshot(cfg: Config, client, store: Store | None = None) -> d
     """Return a JSON-safe control-plane snapshot for operator UIs.
 
     The store is the durable record: the snapshot poll registers live sandboxes
-    into it, ingests chat + log deltas, and marks agents whose sandbox has
+    into it, ingests structured turn deltas, and marks agents whose sandbox has
     disappeared as terminated. Blaxel only answers "what is alive right now";
     an agent's code lives in the shared repo, linked by its branch pointer.
     """
-    agents = await Registry(client, cfg.project).list_agents()
-    if store is not None:
-        store.upsert_project(cfg.project)
-        await asyncio.gather(
-            *(ingest_agent(store, client, agent) for agent in agents),
-            return_exceptions=True,
+    metas = await client.list({})
+    agents = [
+        AgentInfo(
+            project=meta.labels["gtz-project"],
+            team=meta.labels["gtz-team"],
+            agent=meta.labels["gtz-agent"],
+            role=meta.labels["gtz-role"],  # type: ignore[arg-type]
+            sandbox_name=meta.name,
         )
+        for meta in metas
+        if all(
+            isinstance(meta.labels.get(key), str) and meta.labels.get(key)
+            for key in ("gtz-project", "gtz-team", "gtz-agent", "gtz-role")
+        )
+    ]
+    ingest_errors: dict[str, str] = {}
+    if store is not None:
+        known_projects = {project["name"] for project in store.list_projects()}
+        for project_name in {agent.project for agent in agents} - known_projects:
+            store.upsert_project(project_name, status="running")
+        ingest_results = await asyncio.gather(
+            *(ingest_agent(store, client, agent) for agent in agents),
+        )
+        ingest_errors = {
+            agent.sandbox_name: result
+            for agent, result in zip(agents, ingest_results, strict=True)
+            if result
+        }
         live = {agent.sandbox_name for agent in agents}
-        for row in store.list_agents(cfg.project):
-            if row["terminated_at"] is None and row["sandbox"] not in live:
-                store.mark_agent_terminated(row["sandbox"])
+        for project in store.list_projects():
+            for row in store.list_agents(project["name"]):
+                if row["terminated_at"] is None and row["sandbox"] not in live:
+                    store.mark_agent_terminated(row["sandbox"])
     status_results = await asyncio.gather(
         *(monitor.agent_status(client, agent.sandbox_name) for agent in agents),
         return_exceptions=True,
@@ -112,10 +128,39 @@ async def collect_snapshot(cfg: Config, client, store: Store | None = None) -> d
                 "branch": branch_name(agent.team, agent.agent, agent.role),
                 "running": bool(status.get("running")),
                 "log_mtime": status.get("log_mtime"),
+                "turn_status": status.get("turn_status", "idle"),
+                "active_turn_id": status.get("active_turn_id"),
+                "queued": status.get("queued", 0),
+                "session_id": status.get("session_id"),
+                "runtime_id": status.get("runtime_id"),
+                "ingest_error": ingest_errors.get(agent.sandbox_name),
             }
         )
+    stored_projects: dict[str, dict] = {}
+    if store is not None:
+        stored_projects = {project["name"]: project for project in store.list_projects()}
+    project_names = set(stored_projects) | {agent.project for agent in agents} | {cfg.project}
+    projects = []
+    for project_name in sorted(project_names):
+        project_agents = [agent for agent in serialized_agents if agent["project"] == project_name]
+        stored_project = stored_projects.get(project_name)
+        projects.append(
+            {
+                "project": project_name,
+                "project_state": {
+                    "status": stored_project["status"]
+                    if stored_project
+                    else ("running" if project_agents else "idle"),
+                    "objective": stored_project["objective"] if stored_project else "",
+                    "error": stored_project["error"] if stored_project else None,
+                },
+                "agents": project_agents,
+            }
+        )
+    configured = next(project for project in projects if project["project"] == cfg.project)
     return {
         "project": cfg.project,
+        "project_state": configured["project_state"],
         "generated_at": datetime.now(UTC).isoformat(),
         "caps": cfg.caps.model_dump(),
         "budget": {
@@ -132,39 +177,69 @@ async def collect_snapshot(cfg: Config, client, store: Store | None = None) -> d
             "xai": bool(os.environ.get("XAI_API_KEY") or os.environ.get("XAI_API_KEY_2")),
             "github": bool(os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN")),
         },
-        "agents": serialized_agents,
+        "agents": configured["agents"],
+        "projects": projects,
     }
 
 
 async def watch_agent(
-    client, sandbox: str, interval: float = 1.0, lines: int = 80,
-    store: Store | None = None, agent_info: AgentInfo | None = None,
+    client,
+    sandbox: str,
+    interval: float = 1.0,
+    lines: int = 80,
+    after: int = 0,
+    expected_runtime_id: str | None = None,
 ) -> None:
-    """Emit newline-delimited JSON snapshots for an SSE bridge."""
+    """Emit a server-authoritative conversation snapshot followed by ordered deltas."""
     previous_log: str | None = None
     previous_status: dict | None = None
-    previous_messages: list[dict[str, str]] | None = None
+    cursor = max(0, after)
+    first_runtime = True
+    snapshot_required = cursor == 0
     last_heartbeat = 0.0
     while True:
-        if store is not None and agent_info is not None:
-            await ingest_agent(store, client, agent_info)
-        status, log, messages = await asyncio.gather(
+        status, log, runtime = await asyncio.gather(
             monitor.agent_status(client, sandbox),
             monitor.tail_log(client, sandbox, lines),
-            monitor.tail_messages(client, sandbox, lines),
+            monitor.runtime_snapshot(client, sandbox, after=cursor),
         )
+        if runtime:
+            runtime_id = str(runtime.get("runtime_id") or "")
+            if first_runtime and expected_runtime_id and runtime_id != expected_runtime_id:
+                cursor = 0
+                snapshot_required = True
+                runtime = await monitor.runtime_snapshot(client, sandbox, after=0)
+                runtime_id = str(runtime.get("runtime_id") or "") if runtime else ""
+            if not runtime:
+                await asyncio.sleep(max(interval, 0.25))
+                continue
+            events = runtime.get("events", [])
+            next_cursor = max(cursor, int(runtime.get("cursor", cursor)))
+            if first_runtime or events:
+                print(
+                    json.dumps(
+                        {
+                            "type": "snapshot" if snapshot_required else "delta",
+                            "data": {
+                                "runtime_id": runtime_id,
+                                "session_id": runtime.get("session_id"),
+                                "events": events,
+                                "turns": runtime.get("turns", []),
+                                "cursor": next_cursor,
+                            },
+                        }
+                    ),
+                    flush=True,
+                )
+            cursor = next_cursor
+            first_runtime = False
+            snapshot_required = False
         if status != previous_status:
             print(json.dumps({"type": "status", "data": status}), flush=True)
             previous_status = status
         if log != previous_log:
             print(json.dumps({"type": "log", "data": {"content": log}}), flush=True)
             previous_log = log
-        if messages != previous_messages:
-            print(
-                json.dumps({"type": "messages", "data": {"messages": messages}}),
-                flush=True,
-            )
-            previous_messages = messages
         now = asyncio.get_running_loop().time()
         if now - last_heartbeat >= 5:
             print(
@@ -181,15 +256,24 @@ async def watch_agent(
 
 
 @app.command()
-def start(brief: str):
+def start(brief: str, project: str | None = typer.Option(None, "--project")):
     """Spawn the main orchestrator with a research brief."""
     cfg = _cfg()
+    if project:
+        cfg = cfg.model_copy(update={"project": project})
     envs = {k: v for k in PASSTHROUGH_ENVS if (v := os.environ.get(k))}
-    try:
-        with Store() as store:
+    with Store() as store:
+        store.upsert_project(cfg.project, objective=brief, status="provisioning")
+        try:
             name = asyncio.run(start_main_orchestrator(cfg, _client(cfg), brief, envs, store))
-    except ValueError as error:
-        raise typer.BadParameter(str(error)) from error
+        except Exception as error:
+            if isinstance(error, ValueError) and "already exists" in str(error):
+                store.set_project_status(cfg.project, "running")
+            else:
+                store.set_project_status(cfg.project, "failed", str(error))
+            if isinstance(error, ValueError):
+                raise typer.BadParameter(str(error)) from error
+            raise
     typer.echo(f"main orchestrator started: {name}")
 
 
@@ -212,44 +296,82 @@ def snapshot():
 
 @app.command()
 def tail(sandbox: str, lines: int = 50):
-    """Tail an agent's session log."""
+    """Tail an agent runner's diagnostic log."""
     cfg = _cfg()
     _require_project_sandbox(cfg, sandbox)
     typer.echo(asyncio.run(monitor.tail_log(_client(cfg), sandbox, lines)))
 
 
 @app.command()
-def watch(sandbox: str, interval: float = 1.0, lines: int = 80):
-    """Stream an agent's status and rolling log as newline-delimited JSON."""
+def watch(
+    sandbox: str,
+    interval: float = 1.0,
+    lines: int = 80,
+    after: int = 0,
+    runtime_id: str | None = typer.Option(None, "--runtime-id"),
+):
+    """Stream structured agent events as newline-delimited JSON."""
     cfg = _cfg()
     _require_project_sandbox(cfg, sandbox)
     client = _client(cfg)
 
-    async def _watch(store: Store) -> None:
-        agents = await Registry(client, cfg.project).list_agents()
-        agent_info = next((a for a in agents if a.sandbox_name == sandbox), None)
-        await watch_agent(client, sandbox, interval=interval, lines=lines,
-                          store=store, agent_info=agent_info)
-
     try:
-        with Store() as store:
-            asyncio.run(_watch(store))
+        asyncio.run(
+            watch_agent(
+                client,
+                sandbox,
+                interval=interval,
+                lines=lines,
+                after=after,
+                expected_runtime_id=runtime_id,
+            )
+        )
     except KeyboardInterrupt:
         pass
 
 
 @app.command()
-def send(sandbox: str, message: str):
-    """Send a steering message to an agent. Prints {"sent": true, "id": ...}."""
+def send(
+    sandbox: str,
+    message: str,
+    interrupt: bool = typer.Option(False, "--interrupt", help="Interrupt the active turn"),
+    client_id: str | None = typer.Option(None, "--client-id"),
+    retry: bool = typer.Option(False, "--retry", help="Requeue this id only if its turn failed"),
+):
+    """Queue a steering message, or interrupt the active turn explicitly."""
     cfg = _cfg()
     _require_project_sandbox(cfg, sandbox)
-    message_id = asyncio.run(monitor.send_message(_client(cfg), sandbox, message))
-    with Store() as store:
-        store.insert_messages([{
-            "id": message_id, "sandbox": sandbox, "role": "user",
-            "body": message, "at": datetime.now(UTC).isoformat(),
-        }])
-    typer.echo(json.dumps({"sent": True, "id": message_id}))
+    result = asyncio.run(
+        monitor.send_message(
+            _client(cfg),
+            sandbox,
+            message,
+            mode="interrupt" if interrupt else "queue",
+            client_id=client_id,
+            retry=retry,
+        )
+    )
+    typer.echo(
+        json.dumps(
+            {
+                "sent": True,
+                "id": result["client_id"],
+                "turn_id": result["id"],
+                "status": result["status"],
+                "mode": result["mode"],
+                "turn": result,
+            }
+        )
+    )
+
+
+@app.command("repair-chat")
+def repair_chat(sandbox: str):
+    """Non-destructively install the queued chat runner into an existing sandbox."""
+    cfg = _cfg()
+    _require_project_sandbox(cfg, sandbox)
+    result = asyncio.run(monitor.repair_runtime(_client(cfg), sandbox))
+    typer.echo(json.dumps(result, separators=(",", ":")))
 
 
 @app.command()
@@ -276,16 +398,18 @@ def _sweep_project_pods(name_prefix: str) -> list[str]:
 
         rp.api_key = api_key
         return sweep_pods(rp, name_prefix)
-    except Exception:
+    except Exception:  # noqa: BLE001 — cleanup is best effort
         return []
 
 
 @app.command()
-def stop():
+def stop(project: str | None = typer.Option(None, "--project")):
     """Tear down every sandbox in the project and sweep its RunPod pods.
 
     History stays in the store."""
     cfg = _cfg()
+    if project:
+        cfg = cfg.model_copy(update={"project": project})
     client = _client(cfg)
 
     async def _stop(store: Store):

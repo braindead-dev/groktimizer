@@ -39,7 +39,7 @@ export GITHUB_TOKEN=...                         # fine-grained Contents read/wri
 uv run gtz start "Optimize softmax kernels for fp16 4096x4096; beat torch.softmax."
 uv run gtz tree                     # teams and agents
 uv run gtz snapshot                 # machine-readable live control-plane state
-uv run gtz tail <sandbox-name>      # an agent's live session log
+uv run gtz tail <sandbox-name>      # an agent runner's diagnostic log
 uv run gtz watch <sandbox-name>     # stream status + log snapshots as JSONL
 uv run gtz send <sandbox-name> "Status report please"
 uv run gtz spend                    # GPU ledger vs ceiling

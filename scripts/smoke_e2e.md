@@ -27,8 +27,8 @@
   `grok mcp add groktimizer -- python3 -m groktimizer.mcp` → `grok mcp doctor` reports
   handshake OK, 12 tools discovered; a headless grok run called `list_agents` and got the
   live Blaxel registry back.
-- **Kickoff + steering**: tmux kickoff session executed a task and logged to
-  /var/log/gtz/session.log; `monitor.send_message` (`grok --continue` from
+- **Kickoff + steering**: the queued runner executed a task and logged diagnostics to
+  /var/log/gtz/runner.log; `monitor.send_message` (the same exact Grok session from
   /workspace/project) resumed the same session and executed the follow-up instruction.
 
 ## Also verified live (2026-08-08, with real RUNPOD_API_KEY)

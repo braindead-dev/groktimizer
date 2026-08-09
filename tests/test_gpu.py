@@ -110,6 +110,7 @@ def test_ceiling_accounts_for_live_pods_full_lifetime(rp, tmp_path):
 
 def test_sweep_pods_by_prefix(rp, tmp_path):
     from groktimizer.core.gpu import sweep_pods
+
     rp.create_pod("gtz-demo-attn-impl1-bench", "img", GPU)
     rp.create_pod("gtz-demo-gemm-impl2-bench", "img", GPU)
     rp.create_pod("unrelated-pod", "img", GPU)

@@ -13,12 +13,14 @@ import {
   Radio,
   RotateCcw,
   Terminal,
+  Trash2,
   Workflow,
   X,
 } from "lucide-react";
 import { StatusDot, StatusPill } from "@/components/shared/status";
+import { stopAgent } from "@/lib/control-plane-client";
 import type { Agent, Project, ResearchTeam } from "@/lib/types";
-import { useResearchDispatch } from "@/store/research-store";
+import { useResearchDispatch, useResearchState } from "@/store/research-store";
 
 function PanelShell({ title, subtitle, children }: { title: string; subtitle: string; children: React.ReactNode }) {
   const dispatch = useResearchDispatch();
@@ -62,6 +64,7 @@ function RegistryRow({ project, agent, scope }: { project: Project; agent: Agent
 
 function ProjectControl({ project }: { project: Project }) {
   const dispatch = useResearchDispatch();
+  const { controlPlane } = useResearchState();
   const [tab, setTab] = useState<"map" | "registry">("map");
   const agents = registeredAgents(project);
   const active = agents.filter((agent) => agent.status === "running" || agent.status === "thinking");
@@ -78,8 +81,11 @@ function ProjectControl({ project }: { project: Project }) {
             <div className="system-metrics">
               <div><span>Sandboxes</span><strong>{agents.length}</strong><small>Blaxel registry</small></div>
               <div><span>Running</span><strong>{active.length}</strong><small>tmux sessions</small></div>
-              <div><span>Teams</span><strong>{project.teams.length}</strong><small>registered tracks</small></div>
+              <div><span>Teams</span><strong>{project.teams.length}/{controlPlane.maxTeams ?? "—"}</strong><small>registered tracks</small></div>
             </div>
+            {controlPlane.maxTeams !== undefined && project.teams.length >= controlPlane.maxTeams ? (
+              <div className="capacity-notice"><strong>Team cap reached</strong><span>Stop an unproductive team sandbox before asking the main orchestrator to create another track.</span></div>
+            ) : null}
             <div className="topology-canvas topology-canvas-live">
               <div className="canvas-grid" />
               <button
@@ -128,6 +134,7 @@ function ProjectControl({ project }: { project: Project }) {
 }
 
 function TeamControl({ project, team }: { project: Project; team: ResearchTeam }) {
+  const { controlPlane } = useResearchState();
   const teamAgents = [team.orchestrator, ...team.agents].filter((agent) => agent.sandboxName);
   const active = teamAgents.filter((agent) => agent.status === "running" || agent.status === "thinking").length;
 
@@ -139,7 +146,10 @@ function TeamControl({ project, team }: { project: Project; team: ResearchTeam }
           <strong>{active}<small> running</small></strong>
         </div>
         <section className="team-roster-section registry-section">
-          <div className="subsection-title"><span><Workflow size={12} /> Registered team</span><small>{teamAgents.length} sandboxes</small></div>
+          <div className="subsection-title"><span><Workflow size={12} /> Registered team</span><small>{team.agents.length}/{controlPlane.maxAgentsPerTeam ?? "—"} implementers</small></div>
+          {controlPlane.maxAgentsPerTeam !== undefined && team.agents.length >= controlPlane.maxAgentsPerTeam ? (
+            <div className="capacity-notice"><strong>Implementer cap reached</strong><span>Open an implementer below and stop it before asking this team to spawn another.</span></div>
+          ) : null}
           <div className="registry-list">
             {teamAgents.map((agent) => <RegistryRow key={agent.id} project={project} agent={agent} scope={agent.role} />)}
           </div>
@@ -149,7 +159,28 @@ function TeamControl({ project, team }: { project: Project; team: ResearchTeam }
   );
 }
 
-function AgentControl({ agent, team }: { agent: Agent; team?: ResearchTeam }) {
+function AgentControl({ project, agent, team }: { project: Project; agent: Agent; team?: ResearchTeam }) {
+  const dispatch = useResearchDispatch();
+  const [confirmingStop, setConfirmingStop] = useState(false);
+  const [stopping, setStopping] = useState(false);
+  const [stopError, setStopError] = useState<string | null>(null);
+  const canStopIndividually = Boolean(agent.sandboxName)
+    && (agent.role === "researcher" || agent.role === "implementor");
+
+  async function handleStop() {
+    if (!agent.sandboxName || stopping) return;
+    setStopping(true);
+    setStopError(null);
+    try {
+      await stopAgent(agent.sandboxName);
+      dispatch({ type: "select", selection: { type: "project", projectId: project.id } });
+      dispatch({ type: "refresh-control-plane" });
+    } catch (error) {
+      setStopError(error instanceof Error ? error.message : "The agent could not be stopped.");
+      setStopping(false);
+    }
+  }
+
   return (
     <PanelShell title="Sandbox session" subtitle={team?.name ?? agent.role}>
       <div className="researcher-scroll agent-live-details">
@@ -164,7 +195,21 @@ function AgentControl({ agent, team }: { agent: Agent; team?: ResearchTeam }) {
           <div><Clock3 size={13} /><span>Log activity</span><strong>{agent.elapsed}</strong></div>
           <div><Cpu size={13} /><span>Transport</span><strong>{agent.sandboxName ? "SSE · gtz watch" : "Unavailable"}</strong></div>
         </section>
-        <div className="agent-live-note"><Radio size={15} /><p><strong>Live session output</strong>The rolling sandbox log is streamed into the chat pane. Steering messages are delivered with <code>gtz send</code>.</p></div>
+        <div className="agent-live-note"><Radio size={15} /><p><strong>Structured Grok session</strong>Responses, reasoning, and tool activity stream into chat. Raw runner output stays in Diagnostics.</p></div>
+        {canStopIndividually ? (
+          <div className="agent-stop-card">
+            <div><strong>Free this agent slot</strong><span>Stops and removes this sandbox. Completed code remains on its Git branch.</span></div>
+            {confirmingStop ? (
+              <div>
+                <button onClick={() => setConfirmingStop(false)} disabled={stopping}>Cancel</button>
+                <button className="danger-action" onClick={() => void handleStop()} disabled={stopping}>{stopping ? "Stopping…" : "Stop agent"}</button>
+              </div>
+            ) : (
+              <button className="delete-project-action" onClick={() => setConfirmingStop(true)}><Trash2 size={12} /> Stop agent</button>
+            )}
+            {stopError ? <em>{stopError}</em> : null}
+          </div>
+        ) : null}
       </div>
     </PanelShell>
   );
@@ -173,5 +218,5 @@ function AgentControl({ agent, team }: { agent: Agent; team?: ResearchTeam }) {
 export function IntelligencePanel({ project, agent, team }: { project: Project; agent: Agent; team?: ResearchTeam }) {
   if (agent.role === "orchestrator") return <ProjectControl project={project} />;
   if (agent.role === "team-orchestrator" && team) return <TeamControl project={project} team={team} />;
-  return <AgentControl agent={agent} team={team} />;
+  return <AgentControl project={project} agent={agent} team={team} />;
 }
