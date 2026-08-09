@@ -59,14 +59,29 @@ def test_control_plane_response_uses_backend_snapshot(
         return json.dumps({"project": "demo", "projects": [], "agents": []})
 
     monkeypatch.setattr(api, "run_gtz", fake_run_gtz)
-    monkeypatch.setattr(api, "load_baseline", lambda: {"source": "test"})
     with TestClient(api.create_app()) as client:
         response = client.get("/v1/control-plane", headers=authorization())
     assert response.status_code == 200
     assert response.json() == {
         "connected": True,
         "snapshot": {"project": "demo", "projects": [], "agents": []},
-        "baseline": {"source": "test"},
+    }
+
+
+def test_control_plane_reports_offline_without_fallback_projects(
+    api_env: Path, monkeypatch: pytest.MonkeyPatch
+):
+    async def unavailable(*args: str, timeout: float = 120):
+        raise RuntimeError("unavailable")
+
+    monkeypatch.setattr(api, "run_gtz", unavailable)
+    with TestClient(api.create_app()) as client:
+        response = client.get("/v1/control-plane", headers=authorization())
+    assert response.status_code == 200
+    assert response.json() == {
+        "connected": False,
+        "mode": "offline",
+        "reason": "The control plane is unavailable",
     }
 
 

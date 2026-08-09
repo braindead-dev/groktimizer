@@ -13,9 +13,7 @@ import secrets
 import signal
 import sys
 import time
-import urllib.error
 import urllib.parse
-import urllib.request
 from contextlib import asynccontextmanager, suppress
 from datetime import UTC, datetime
 from importlib.metadata import version
@@ -33,12 +31,6 @@ from groktimizer.core.store import SCHEMA_VERSION, Store
 
 PROJECT_NAME = re.compile(r"^[a-z0-9]{1,24}$")
 SANDBOX_NAME = re.compile(r"^gtz-[a-z0-9]{1,24}-[a-z0-9]{1,24}-[a-z0-9]{1,24}$")
-EMPTY_BASELINE = {
-    "hardware": {"gpu": "unavailable", "vramGb": 0, "contextTokens": 0},
-    "latency": [],
-    "throughput": [],
-    "accuracy": [],
-}
 APP_VERSION = version("groktimizer")
 
 
@@ -176,95 +168,6 @@ async def run_gtz(*args: str, timeout: float = 120) -> str:
         detail = stderr.decode("utf-8", errors="replace").strip()
         raise CommandError(tuple(args), detail or "control-plane command failed")
     return output
-
-
-def _configured_repo(cfg: Config) -> tuple[str, str]:
-    parsed = urllib.parse.urlparse(
-        cfg.shared_repo.replace("git@github.com:", "https://github.com/")
-    )
-    parts = parsed.path.removesuffix(".git").strip("/").split("/")
-    if parsed.hostname != "github.com" or len(parts) != 2:
-        raise ValueError("shared_repo must be a GitHub repository")
-    return parts[0], parts[1]
-
-
-def _read_result_file(cfg: Config, filename: str) -> str:
-    local = _command_cwd() / "results" / filename
-    if local.is_file():
-        return local.read_text()
-    owner, repo = _configured_repo(cfg)
-    url = (
-        f"https://api.github.com/repos/{urllib.parse.quote(owner)}/{urllib.parse.quote(repo)}"
-        f"/contents/results/{urllib.parse.quote(filename)}?ref=main"
-    )
-    headers = {
-        "Accept": "application/vnd.github.raw+json",
-        "X-GitHub-Api-Version": "2022-11-28",
-        "User-Agent": "groktimizer-control-plane",
-    }
-    token = os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN")
-    if token:
-        headers["Authorization"] = f"Bearer {token}"
-    request = urllib.request.Request(url, headers=headers)
-    with urllib.request.urlopen(request, timeout=15) as response:  # noqa: S310
-        return response.read().decode("utf-8")
-
-
-_baseline_value: dict[str, Any] | None = None
-_baseline_expires = 0.0
-
-
-def load_baseline() -> dict[str, Any]:
-    global _baseline_expires, _baseline_value  # noqa: PLW0603
-    now = time.monotonic()
-    if _baseline_value is not None and now < _baseline_expires:
-        return _baseline_value
-    cfg = _config()
-    benchmark = json.loads(_read_result_file(cfg, "bench_results.json"))
-    throughput = json.loads(_read_result_file(cfg, "tput_results.json"))
-    accuracy = json.loads(_read_result_file(cfg, "mc_results.json"))
-    value = {
-        "hardware": {
-            "gpu": "NVIDIA RTX PRO 6000 Blackwell",
-            "vramGb": 96,
-            "contextTokens": 32_768,
-        },
-        "latency": sorted(
-            (
-                {
-                    "promptTokens": int(prompt_tokens),
-                    "ttftMs": result["ttft_ms"],
-                    "decodeTps": result["decode_tps"],
-                    "prefillTps": result["prefill_tps"],
-                }
-                for prompt_tokens, result in benchmark.items()
-            ),
-            key=lambda result: result["promptTokens"],
-        ),
-        "throughput": [
-            {
-                "concurrency": result["concurrency"],
-                "aggregateDecodeTps": result["agg_decode_tps"],
-                "perStreamTps": result["per_stream_tps"],
-                "medianTtftMs": result["median_ttft_ms"],
-                "endToEndTps": result["e2e_tps"],
-            }
-            for result in throughput
-        ],
-        "accuracy": [
-            {
-                "task": result["task"],
-                "correct": result["correct"],
-                "total": result["total"],
-                "accuracy": result["acc"],
-                "unparsed": result["unparsed"],
-            }
-            for result in accuracy
-        ],
-    }
-    _baseline_value = value
-    _baseline_expires = now + 60
-    return value
 
 
 def _b64encode(value: bytes) -> str:
@@ -539,29 +442,23 @@ def create_app() -> FastAPI:
 
     @app.get("/v1/control-plane", dependencies=authenticated)
     async def control_plane():
-        baseline_task = asyncio.to_thread(load_baseline)
-        snapshot_task = run_gtz("snapshot", timeout=60)
-        baseline_result, snapshot_result = await asyncio.gather(
-            baseline_task, snapshot_task, return_exceptions=True
-        )
-        baseline = baseline_result if isinstance(baseline_result, dict) else EMPTY_BASELINE
-        if isinstance(snapshot_result, Exception):
+        try:
+            snapshot_result = await run_gtz("snapshot", timeout=60)
+        except Exception:  # noqa: BLE001 -- connection state is part of the API contract.
             return {
                 "connected": False,
-                "mode": "baseline",
+                "mode": "offline",
                 "reason": "The control plane is unavailable",
-                "baseline": baseline,
             }
         try:
             snapshot = json.loads(snapshot_result)
         except json.JSONDecodeError:
             return {
                 "connected": False,
-                "mode": "baseline",
+                "mode": "offline",
                 "reason": "The control plane returned invalid data",
-                "baseline": baseline,
             }
-        return {"connected": True, "snapshot": snapshot, "baseline": baseline}
+        return {"connected": True, "snapshot": snapshot}
 
     @app.get("/v1/projects/history", dependencies=authenticated)
     async def project_history():
