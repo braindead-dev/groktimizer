@@ -5,7 +5,6 @@ import pytest
 from fastapi.testclient import TestClient
 
 from groktimizer import api
-from groktimizer.core.research_record import ResearchRecord
 from groktimizer.core.store import Store
 
 
@@ -146,9 +145,64 @@ def test_stream_ticket_endpoint_returns_only_configured_backend_origin(api_env: 
 
 @pytest.mark.asyncio
 async def test_persistent_agent_stream_replays_history_without_remote_runner(api_env: Path):
-    record = ResearchRecord.from_path(Path("research/grok2-program.json"))
+    sandbox = "gtz-demo-runtime-kernel"
     with Store(api_env) as store:
-        record.install(store)
+        store.upsert_project("demo", objective="Improve inference performance.")
+        store.upsert_agent(
+            sandbox,
+            project="demo",
+            team="runtime",
+            name="kernel",
+            role="implementer",
+        )
+        store.upsert_turns(
+            sandbox,
+            [
+                {
+                    "id": "turn-1",
+                    "client_id": "client-1",
+                    "prompt": "Validate the candidate.",
+                    "display_prompt": "Validate the candidate.",
+                    "mode": "queue",
+                    "sender_kind": "agent",
+                    "sender_sandbox": "gtz-demo-hq-main",
+                    "sender_label": "Orchestrator",
+                    "status": "running",
+                    "created_at": "2026-08-08T20:00:00+00:00",
+                    "started_at": "2026-08-08T20:00:00+00:00",
+                    "finished_at": None,
+                    "error": None,
+                    "revision": 1,
+                }
+            ],
+        )
+        store.insert_turn_events(
+            sandbox,
+            [
+                {
+                    "id": "event-1",
+                    "seq": 1,
+                    "turn_id": "turn-1",
+                    "type": "reasoning",
+                    "payload": {"text": "Compare the candidate against the baseline."},
+                    "at": "2026-08-08T20:00:01+00:00",
+                }
+            ],
+        )
+        store.set_runtime(
+            sandbox,
+            {
+                "runtime_id": "runtime-1",
+                "session_id": "session-1",
+                "transport": "persistent",
+                "running": True,
+                "turn_status": "running",
+                "active_turn_id": "turn-1",
+                "queued": 0,
+                "cursor": 1,
+            },
+        )
+        store.set_event_cursor(sandbox, 1)
 
     class DisconnectedRequest:
         async def is_disconnected(self):
@@ -158,7 +212,7 @@ async def test_persistent_agent_stream_replays_history_without_remote_runner(api
         chunk
         async for chunk in api._agent_stream(  # noqa: SLF001
             DisconnectedRequest(),
-            "gtz-grok2performance-speculation-ngram",
+            sandbox,
             0,
             None,
         )

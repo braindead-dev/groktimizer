@@ -18,6 +18,7 @@ AgentState = Literal["running", "thinking", "complete"]
 class MetricPointRecord(BaseModel):
     label: str
     value: float
+    elapsed_hours: float | None = Field(default=None, ge=0)
 
 
 class MetricSeriesRecord(BaseModel):
@@ -27,6 +28,20 @@ class MetricSeriesRecord(BaseModel):
     direction: Literal["higher", "lower"]
     accent: Literal["orange", "blue", "lime", "violet"]
     points: list[MetricPointRecord] = Field(min_length=2)
+
+    @model_validator(mode="after")
+    def validate_timeline(self) -> MetricSeriesRecord:
+        elapsed = [point.elapsed_hours for point in self.points]
+        if all(value is None for value in elapsed):
+            return self
+        if any(value is None for value in elapsed):
+            raise ValueError("metric point elapsed_hours must be supplied for every point")
+        defined = [value for value in elapsed if value is not None]
+        if any(
+            current <= previous for previous, current in zip(defined, defined[1:], strict=False)
+        ):
+            raise ValueError("metric point elapsed_hours must be strictly increasing")
+        return self
 
     @property
     def baseline(self) -> float:
@@ -47,6 +62,46 @@ class DecisionRecord(BaseModel):
     time: str
 
 
+class HistoryEventRecord(BaseModel):
+    type: Literal["reasoning", "tool", "assistant_text"]
+    offset_seconds: int = Field(ge=0)
+    text: str | None = None
+    tool: str | None = None
+    status: Literal["running", "completed"] | None = None
+    output: str | None = None
+
+    @model_validator(mode="after")
+    def validate_payload(self) -> HistoryEventRecord:
+        if self.type == "tool":
+            if not self.tool or not self.status or not self.output:
+                raise ValueError("tool history requires tool, status, and output")
+        elif not self.text:
+            raise ValueError(f"{self.type} history requires text")
+        return self
+
+
+class HistoryTurnRecord(BaseModel):
+    slug: str = Field(min_length=1, pattern=r"^[a-z0-9][a-z0-9-]*$")
+    prompt: str = Field(min_length=1)
+    status: Literal["running", "completed"]
+    started_minutes_ago: int = Field(ge=0)
+    duration_minutes: int | None = Field(default=None, ge=0)
+    events: list[HistoryEventRecord] = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def validate_events(self) -> HistoryTurnRecord:
+        offsets = [event.offset_seconds for event in self.events]
+        if any(
+            current <= previous for previous, current in zip(offsets, offsets[1:], strict=False)
+        ):
+            raise ValueError("history event offsets must be strictly increasing")
+        if self.status == "completed" and self.duration_minutes is None:
+            raise ValueError("completed history turns require duration_minutes")
+        if self.status == "running" and self.duration_minutes is not None:
+            raise ValueError("running history turns cannot have duration_minutes")
+        return self
+
+
 class AgentRecord(BaseModel):
     id: str
     name: str
@@ -58,6 +113,22 @@ class AgentRecord(BaseModel):
     finding: str
     current_work: str
     tools: list[str] = Field(default_factory=list)
+    history: list[HistoryTurnRecord] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def validate_history(self) -> AgentRecord:
+        slugs = [turn.slug for turn in self.history]
+        if len(slugs) != len(set(slugs)):
+            raise ValueError("history turn slugs must be unique per agent")
+        offsets = [turn.started_minutes_ago for turn in self.history]
+        if any(
+            current >= previous for previous, current in zip(offsets, offsets[1:], strict=False)
+        ):
+            raise ValueError("history turns must be ordered from oldest to newest")
+        running = [index for index, turn in enumerate(self.history) if turn.status == "running"]
+        if len(running) > 1 or (running and running[0] != len(self.history) - 1):
+            raise ValueError("only the final history turn may be running")
+        return self
 
 
 class TeamRecord(BaseModel):
@@ -146,6 +217,18 @@ def _all_agents(project: ProjectRecord) -> list[tuple[str, AgentRecord]]:
     return agents
 
 
+def _project_document(project: ProjectRecord) -> dict:
+    """Return project topology without duplicating per-agent conversation history."""
+    document = project.model_dump(exclude_none=True)
+    document["orchestrator"].pop("history", None)
+    document["reconciler"].pop("history", None)
+    for team in document["teams"]:
+        team["orchestrator"].pop("history", None)
+        for agent in team["agents"]:
+            agent.pop("history", None)
+    return document
+
+
 def _turns_and_events(
     project: ProjectRecord,
     team: str,
@@ -153,119 +236,70 @@ def _turns_and_events(
     base: datetime,
 ) -> tuple[list[dict], list[dict], dict]:
     sandbox = _sandbox(project.id, team, agent.id)
-    completed_id = f"{sandbox}-evidence"
-    active_id = f"{sandbox}-active"
-    completed_at = base - timedelta(minutes=34 - min(agent.progress // 4, 20))
-    active_at = base - timedelta(minutes=3)
-    turns = [
-        {
-            "id": completed_id,
-            "client_id": f"{completed_id}-client",
-            "prompt": agent.task,
-            "display_prompt": agent.task,
-            "mode": "queue",
-            "sender_kind": "agent",
-            "sender_sandbox": _sandbox(project.id, "hq", "main"),
-            "sender_label": "Orchestrator",
-            "status": "completed",
-            "created_at": completed_at.isoformat(),
-            "started_at": completed_at.isoformat(),
-            "finished_at": (completed_at + timedelta(minutes=6)).isoformat(),
-            "error": None,
-            "revision": 2,
-        },
-        {
-            "id": active_id,
-            "client_id": f"{active_id}-client",
-            "prompt": agent.current_work,
-            "display_prompt": agent.current_work,
-            "mode": "queue",
-            "sender_kind": "agent",
-            "sender_sandbox": _sandbox(project.id, "hq", "main"),
-            "sender_label": "Orchestrator",
-            "status": "running" if agent.status != "complete" else "completed",
-            "created_at": active_at.isoformat(),
-            "started_at": active_at.isoformat(),
-            "finished_at": None if agent.status != "complete" else base.isoformat(),
-            "error": None,
-            "revision": 1,
-        },
-    ]
-    events: list[dict] = [
-        {
-            "id": f"{completed_id}-reasoning",
-            "seq": 1,
-            "turn_id": completed_id,
-            "type": "reasoning",
-            "payload": {"text": f"Validated the current hypothesis against {project.hardware}."},
-            "at": (completed_at + timedelta(minutes=1)).isoformat(),
-        }
-    ]
-    sequence = 2
-    for index, tool in enumerate(agent.tools):
-        events.append(
+    sender_sandbox = _sandbox(project.id, "hq", "main")
+    turns: list[dict] = []
+    events: list[dict] = []
+    sequence = 1
+    active_id: str | None = None
+    for spec in agent.history:
+        turn_id = f"{sandbox}-record-{spec.slug}"
+        created_at = base - timedelta(minutes=spec.started_minutes_ago)
+        finished_at = (
+            min(created_at + timedelta(minutes=spec.duration_minutes), base)
+            if spec.duration_minutes is not None
+            else None
+        )
+        if spec.status == "running":
+            active_id = turn_id
+        turns.append(
             {
-                "id": f"{completed_id}-tool-{index}",
-                "seq": sequence,
-                "turn_id": completed_id,
-                "type": "tool",
-                "payload": {
-                    "toolCallId": f"{completed_id}-tool-call-{index}",
-                    "title": tool,
-                    "status": "completed",
-                    "content": f"Completed successfully. Evidence attached to {agent.branch}.",
-                },
-                "at": (completed_at + timedelta(minutes=2 + index)).isoformat(),
+                "id": turn_id,
+                "client_id": f"{turn_id}-client",
+                "prompt": spec.prompt,
+                "display_prompt": spec.prompt,
+                "mode": "queue",
+                "sender_kind": "agent",
+                "sender_sandbox": sender_sandbox,
+                "sender_label": "Orchestrator",
+                "status": spec.status,
+                "created_at": created_at.isoformat(),
+                "started_at": created_at.isoformat(),
+                "finished_at": finished_at.isoformat() if finished_at is not None else None,
+                "error": None,
+                "revision": 2,
             }
         )
-        sequence += 1
-    events.extend(
-        [
-            {
-                "id": f"{completed_id}-answer",
-                "seq": sequence,
-                "turn_id": completed_id,
-                "type": "assistant_text",
-                "payload": {"text": agent.finding},
-                "at": (completed_at + timedelta(minutes=5)).isoformat(),
-            },
-            {
-                "id": f"{active_id}-reasoning",
-                "seq": sequence + 1,
-                "turn_id": active_id,
-                "type": "reasoning",
-                "payload": {"text": agent.current_work},
-                "at": active_at.isoformat(),
-            },
-            {
-                "id": f"{active_id}-tool",
-                "seq": sequence + 2,
-                "turn_id": active_id,
-                "type": "tool",
-                "payload": {
-                    "toolCallId": f"{active_id}-tool-call",
-                    "title": agent.tools[-1] if agent.tools else "run_benchmark",
-                    "status": "running" if agent.status != "complete" else "completed",
-                    "content": (
-                        "Benchmark is active; partial measurements are streaming into "
-                        "the run ledger."
-                    )
-                    if agent.status != "complete"
-                    else "Validation complete and recorded.",
-                },
-                "at": (active_at + timedelta(seconds=20)).isoformat(),
-            },
-        ]
-    )
+        for event_index, event in enumerate(spec.events):
+            payload: dict[str, str] = {}
+            if event.type == "tool":
+                payload = {
+                    "toolCallId": f"{turn_id}-tool-call-{event_index}",
+                    "title": event.tool or "",
+                    "status": event.status or "completed",
+                    "content": event.output or "",
+                }
+            else:
+                payload = {"text": event.text or ""}
+            events.append(
+                {
+                    "id": f"{turn_id}-event-{event_index}",
+                    "seq": sequence,
+                    "turn_id": turn_id,
+                    "type": event.type,
+                    "payload": payload,
+                    "at": (created_at + timedelta(seconds=event.offset_seconds)).isoformat(),
+                }
+            )
+            sequence += 1
     runtime = {
         "runtime_id": f"runtime-{project.id}-{team}-{agent.id}",
         "session_id": f"session-{project.id}-{team}-{agent.id}",
-        "turn_status": "running" if agent.status != "complete" else "idle",
-        "active_turn_id": active_id if agent.status != "complete" else None,
+        "turn_status": "running" if active_id else "idle",
+        "active_turn_id": active_id,
         "queued": 0,
-        "running": agent.status != "complete",
+        "running": active_id is not None,
         "transport": "persistent",
-        "cursor": sequence + 2,
+        "cursor": sequence - 1,
     }
     return turns, events, runtime
 
@@ -276,6 +310,14 @@ def _install_project(
     project: ProjectRecord,
     installed_at: datetime,
 ) -> None:
+    stored_document = store.research_document(project.id) or {}
+    record_installed_at = stored_document.get("record_installed_at")
+    history_base = installed_at
+    if isinstance(record_installed_at, str):
+        try:
+            history_base = datetime.fromisoformat(record_installed_at)
+        except ValueError:
+            pass
     store.upsert_project(
         project.id,
         objective=project.objective,
@@ -287,9 +329,10 @@ def _install_project(
         project.id,
         json.dumps(
             {
-                **project.model_dump(),
+                **_project_document(project),
                 "program_title": record.title,
                 "record_source_url": record.source_url,
+                "record_installed_at": history_base.isoformat(),
             },
             separators=(",", ":"),
         ),
@@ -303,9 +346,14 @@ def _install_project(
             name=agent.id,
             role=agent.role,
         )
-        turns, events, runtime = _turns_and_events(project, team, agent, installed_at)
-        store.reset_conversation(sandbox, runtime["runtime_id"])
+        turns, events, runtime = _turns_and_events(project, team, agent, history_base)
+        turn_prefix = f"{sandbox}-record-"
+        existing = store.conversation_for(sandbox)
+        has_live_history = any(not turn["id"].startswith(turn_prefix) for turn in existing["turns"])
+        cursor = store.prepare_record_history(sandbox, turn_prefix, len(events))
         store.upsert_turns(sandbox, turns)
         store.insert_turn_events(sandbox, events)
-        store.set_event_cursor(sandbox, runtime["cursor"])
+        runtime["cursor"] = cursor
+        if has_live_history and existing["runtime"]:
+            runtime = {**existing["runtime"], "cursor": cursor}
         store.set_runtime(sandbox, runtime)

@@ -425,6 +425,42 @@ class Store:
                 (runtime_id, sandbox),
             )
 
+    def prepare_record_history(self, sandbox: str, turn_prefix: str, event_count: int) -> int:
+        """Replace record-owned history while preserving and rebasing later live events."""
+        prefix_length = len(turn_prefix)
+        preserved = self.db.execute(
+            "SELECT id FROM turn_events WHERE sandbox=?"
+            " AND substr(turn_id, 1, ?) != ? ORDER BY remote_seq, id",
+            (sandbox, prefix_length, turn_prefix),
+        ).fetchall()
+        with self.db:
+            self.db.execute(
+                "DELETE FROM turn_events WHERE sandbox=? AND substr(turn_id, 1, ?)=?",
+                (sandbox, prefix_length, turn_prefix),
+            )
+            self.db.execute(
+                "DELETE FROM turns WHERE sandbox=? AND substr(id, 1, ?)=?",
+                (sandbox, prefix_length, turn_prefix),
+            )
+            # Move preserved rows out of the positive sequence range first. Updating
+            # directly can collide with another preserved row's current sequence.
+            for temporary, row in enumerate(preserved, start=1):
+                self.db.execute(
+                    "UPDATE turn_events SET remote_seq=? WHERE id=? AND sandbox=?",
+                    (-temporary, row["id"], sandbox),
+                )
+            for offset, row in enumerate(preserved, start=event_count + 1):
+                self.db.execute(
+                    "UPDATE turn_events SET remote_seq=? WHERE id=? AND sandbox=?",
+                    (offset, row["id"], sandbox),
+                )
+            cursor = event_count + len(preserved)
+            self.db.execute(
+                "UPDATE agents SET event_cursor=? WHERE sandbox=?",
+                (cursor, sandbox),
+            )
+        return cursor
+
     # -- structured turns ------------------------------------------------
 
     def upsert_turns(self, sandbox: str, rows: list[dict]) -> int:

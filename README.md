@@ -39,7 +39,7 @@ export GITHUB_TOKEN=...                         # fine-grained Contents read/wri
 uv run gtz start "Optimize softmax kernels for fp16 4096x4096; beat torch.softmax."
 uv run gtz tree                     # teams and agents
 uv run gtz snapshot                 # machine-readable live control-plane state
-uv run gtz import-record research/grok2-program.json  # install validated run evidence
+uv run gtz import-record /path/to/research-record.json  # import a validated run archive
 uv run gtz tail <sandbox-name>      # an agent runner's diagnostic log
 uv run gtz watch <sandbox-name>     # stream status + log snapshots as JSONL
 uv run gtz send <sandbox-name> "Status report please"
@@ -86,14 +86,13 @@ agent over SSE, and sends steering messages through `gtz send`. Validated resear
 also be installed into the same SQLite control plane for durable review of completed and ongoing
 runs. The UI never owns project metrics, teams, agent activity, or conversation fixtures.
 
-Our flagship use of Groktimizer is improving Grok 2 inference and adding vision capabilities. The
-source-linked results live in `research/grok2-program.json`, where they are normal control-plane
-data rather than product logic. Importing the record validates every project, metric series, team,
-and agent before an idempotent transaction creates the corresponding projects and ordered event
-history:
+Our flagship use of Groktimizer is improving Grok 2 inference and adding vision capabilities.
+Those results are stored as normal control-plane records rather than product logic. Importing a
+research archive validates every project, metric series, team, agent, and ordered event before an
+idempotent import updates the durable store:
 
 ```bash
-uv run gtz import-record research/grok2-program.json --exclusive
+uv run gtz import-record /path/to/research-record.json --exclusive
 ```
 
 `--exclusive` removes stale projects from the durable store, which is useful for a focused
@@ -121,7 +120,6 @@ documented in `deploy/azure/README.md`.
 - `groktimizer/cli/` — the `gtz` operator CLI.
 - `groktimizer/api.py` — authenticated HTTP gateway, project recovery, and ticketed SSE.
 - `groktimizer/core/research_record.py` — validated research-record schema and idempotent importer.
-- `research/` — source-linked research programs consumed by the control plane.
 - `groktimizer/prompts/` — role prompt templates.
 - `frontend/` — Next.js command center, control-plane gateway, and SSE agent streams.
 - `docs/architecture.md` — current data ownership, transport, and production topology.

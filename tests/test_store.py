@@ -143,6 +143,37 @@ def test_structured_turns_and_events(store):
     assert conversation["runtime"]["turn_status"] == "idle"
 
 
+def test_record_history_rebase_avoids_sequence_collisions(store):
+    store.upsert_agent("sb", project="demo", team="hq", name="main", role="main")
+    rows = []
+    for index in range(1, 4):
+        live_turn = turn("completed")
+        live_turn["id"] = f"live-turn-{index}"
+        live_turn["client_id"] = f"live-client-{index}"
+        rows.append(live_turn)
+    store.upsert_turns("sb", rows)
+    store.insert_turn_events(
+        "sb",
+        [
+            {
+                "id": f"live-event-{index}",
+                "seq": index + 10,
+                "turn_id": f"live-turn-{index}",
+                "type": "assistant_text",
+                "payload": {"text": f"result {index}"},
+                "at": f"2026-01-01T00:00:0{index}",
+            }
+            for index in range(1, 4)
+        ],
+    )
+
+    cursor = store.prepare_record_history("sb", "sb-record-", 11)
+
+    conversation = store.conversation_for("sb")
+    assert [event["seq"] for event in conversation["events"]] == [12, 13, 14]
+    assert cursor == 14
+
+
 def test_turn_status_cannot_regress_from_an_older_revision(store):
     store.upsert_agent("sb", project="demo", team="hq", name="main", role="main")
     completed = turn("completed")
