@@ -1072,15 +1072,18 @@ version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "blaxel" },
+    { name = "fastapi" },
     { name = "mcp" },
     { name = "pydantic" },
     { name = "python-dotenv" },
     { name = "runpod" },
     { name = "typer" },
+    { name = "uvicorn", extra = ["standard"] },
 ]
 
 [package.dev-dependencies]
 dev = [
+    { name = "httpx" },
     { name = "pytest" },
     { name = "pytest-asyncio" },
     { name = "ruff" },
@@ -1089,15 +1092,18 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "blaxel" },
+    { name = "fastapi", specifier = ">=0.116" },
     { name = "mcp", specifier = ">=1.2" },
     { name = "pydantic", specifier = ">=2" },
     { name = "python-dotenv", specifier = ">=1.2.2" },
     { name = "runpod" },
     { name = "typer", specifier = ">=0.12" },
+    { name = "uvicorn", extras = ["standard"], specifier = ">=0.35" },
 ]
 
 [package.metadata.requires-dev]
 dev = [
+    { name = "httpx", specifier = ">=0.28" },
     { name = "pytest", specifier = ">=8" },
     { name = "pytest-asyncio", specifier = ">=0.24" },
     { name = "ruff", specifier = ">=0.16.2" },

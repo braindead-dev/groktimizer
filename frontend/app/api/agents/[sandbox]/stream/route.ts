@@ -1,4 +1,9 @@
 import { spawn, type ChildProcess } from "node:child_process";
+import {
+  controlPlaneFetch,
+  hasRemoteControlPlane,
+  validateBackendStreamUrl,
+} from "@/lib/control-plane-backend";
 import { controlPlaneRoot, hasControlPlaneConfig, isSandboxName, uvExecutable } from "@/lib/control-plane-server";
 import { readAgentHistory } from "@/lib/db";
 
@@ -96,7 +101,6 @@ function liveStream(
 export async function GET(request: Request, context: { params: Promise<{ sandbox: string }> }) {
   const { sandbox } = await context.params;
   if (!isSandboxName(sandbox)) return new Response("Invalid sandbox", { status: 400 });
-  if (!hasControlPlaneConfig()) return new Response("Control plane is not configured", { status: 503 });
   const lastEventId = request.headers.get("last-event-id");
   let after = 0;
   let runtimeId: string | undefined;
@@ -108,7 +112,30 @@ export async function GET(request: Request, context: { params: Promise<{ sandbox
       runtimeId = lastEventId.slice(0, separator);
       after = parsedAfter;
     }
-  } else {
+  }
+
+  if (hasRemoteControlPlane()) {
+    try {
+      const response = await controlPlaneFetch(
+        `/v1/agents/${encodeURIComponent(sandbox)}/stream-ticket`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ after, runtimeId }),
+        },
+      );
+      const payload = await response.json().catch(() => null) as { url?: string; error?: string } | null;
+      if (!response.ok || !payload?.url) {
+        return new Response(payload?.error ?? "Agent stream unavailable", { status: response.status });
+      }
+      return Response.redirect(validateBackendStreamUrl(payload.url), 307);
+    } catch {
+      return new Response("The remote control plane is unavailable", { status: 502 });
+    }
+  }
+
+  if (!hasControlPlaneConfig()) return new Response("Control plane is not configured", { status: 503 });
+  if (!lastEventId) {
     initial = readAgentHistory(sandbox);
     runtimeId = initial.runtime_id || undefined;
     after = initial.cursor;

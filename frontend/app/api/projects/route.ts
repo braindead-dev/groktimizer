@@ -1,14 +1,16 @@
 import { spawn } from "node:child_process";
 import { NextResponse } from "next/server";
 import type { ControlPlaneSnapshot } from "@/lib/control-plane-types";
+import {
+  backendResponse,
+  controlPlaneFetch,
+  hasRemoteControlPlane,
+} from "@/lib/control-plane-backend";
 import { controlPlaneRoot, hasControlPlaneConfig, runGtz, uvExecutable } from "@/lib/control-plane-server";
 
 export const runtime = "nodejs";
 
 export async function POST(request: Request) {
-  if (!hasControlPlaneConfig()) {
-    return NextResponse.json({ error: "Control plane is not configured" }, { status: 503 });
-  }
   let body: unknown;
   try {
     body = await request.json();
@@ -26,6 +28,21 @@ export async function POST(request: Request) {
   }
   if (typeof project !== "string" || !/^[a-z0-9]{1,24}$/.test(project)) {
     return NextResponse.json({ error: "Project id must contain 1–24 lowercase letters or numbers" }, { status: 400 });
+  }
+
+  if (hasRemoteControlPlane()) {
+    try {
+      return backendResponse(await controlPlaneFetch("/v1/projects", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ objective: objective.trim(), project }),
+      }));
+    } catch {
+      return NextResponse.json({ error: "The remote control plane is unavailable" }, { status: 502 });
+    }
+  }
+  if (!hasControlPlaneConfig()) {
+    return NextResponse.json({ error: "Control plane is not configured" }, { status: 503 });
   }
 
   try {

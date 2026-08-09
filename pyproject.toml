@@ -4,21 +4,24 @@ version = "0.1.0"
 description = "Hierarchical grok-build autoresearch system for GPU kernel optimization"
 requires-python = ">=3.11"
 dependencies = [
+    "fastapi>=0.116",
     "pydantic>=2",
     "typer>=0.12",
     "mcp>=1.2",
     "blaxel",
     "runpod",
     "python-dotenv>=1.2.2",
+    "uvicorn[standard]>=0.35",
 ]
 
 [project.scripts]
 gtz = "groktimizer.cli.main:app"
+gtz-api = "groktimizer.api:main"
 gtz-model = "groktimizer.integrations.grok_build:main"
 gtz-grok = "groktimizer.integrations.grok_build:launch_fast_model"
 
 [dependency-groups]
-dev = ["pytest>=8", "pytest-asyncio>=0.24", "ruff>=0.16.2"]
+dev = ["httpx>=0.28", "pytest>=8", "pytest-asyncio>=0.24", "ruff>=0.16.2"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

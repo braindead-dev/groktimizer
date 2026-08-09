@@ -1,5 +1,10 @@
 import { NextResponse } from "next/server";
 import type { ControlPlaneSnapshot } from "@/lib/control-plane-types";
+import {
+  backendResponse,
+  controlPlaneFetch,
+  hasRemoteControlPlane,
+} from "@/lib/control-plane-backend";
 import { hasControlPlaneConfig, runGtz } from "@/lib/control-plane-server";
 
 export const runtime = "nodejs";
@@ -14,6 +19,17 @@ export async function DELETE(
   const { project } = await context.params;
   if (!PROJECT_NAME.test(project)) {
     return NextResponse.json({ error: "Invalid project" }, { status: 400 });
+  }
+  if (hasRemoteControlPlane()) {
+    try {
+      return backendResponse(await controlPlaneFetch(
+        `/v1/projects/${encodeURIComponent(project)}`,
+        { method: "DELETE" },
+        180_000,
+      ));
+    } catch {
+      return NextResponse.json({ error: "The remote control plane is unavailable" }, { status: 502 });
+    }
   }
   if (!hasControlPlaneConfig()) {
     return NextResponse.json({ error: "Control plane is not configured" }, { status: 503 });

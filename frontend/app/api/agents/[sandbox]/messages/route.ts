@@ -1,4 +1,9 @@
 import { NextResponse } from "next/server";
+import {
+  backendResponse,
+  controlPlaneFetch,
+  hasRemoteControlPlane,
+} from "@/lib/control-plane-backend";
 import { hasControlPlaneConfig, isSandboxName, runGtz } from "@/lib/control-plane-server";
 
 export const runtime = "nodejs";
@@ -8,10 +13,6 @@ export async function POST(request: Request, context: { params: Promise<{ sandbo
   if (!isSandboxName(sandbox)) {
     return NextResponse.json({ error: "Invalid sandbox" }, { status: 400 });
   }
-  if (!hasControlPlaneConfig()) {
-    return NextResponse.json({ error: "Control plane is not configured" }, { status: 503 });
-  }
-
   let body: unknown;
   try {
     body = await request.json();
@@ -38,6 +39,28 @@ export async function POST(request: Request, context: { params: Promise<{ sandbo
   }
   if (mode !== "queue" && mode !== "interrupt") {
     return NextResponse.json({ error: "Mode must be queue or interrupt" }, { status: 400 });
+  }
+
+  if (hasRemoteControlPlane()) {
+    try {
+      return backendResponse(await controlPlaneFetch(
+        `/v1/agents/${encodeURIComponent(sandbox)}/messages`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ message: message.trim(), clientId: clientId.trim(), mode, retry }),
+        },
+        150_000,
+      ));
+    } catch {
+      return NextResponse.json(
+        { error: "Steering delivery could not be confirmed.", code: "delivery_unknown" },
+        { status: 502 },
+      );
+    }
+  }
+  if (!hasControlPlaneConfig()) {
+    return NextResponse.json({ error: "Control plane is not configured" }, { status: 503 });
   }
 
   try {
