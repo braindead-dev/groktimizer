@@ -92,6 +92,7 @@ def test_public_endpoint_requires_dedicated_key(monkeypatch):
 
     validate_auth(ModelConfig())
     assert ModelConfig().base_url == DEFAULT_BASE_URL
+    assert ModelConfig().model == "grok-2"
     assert ModelConfig().name == "🟣 Groktimized 2"
 
 
