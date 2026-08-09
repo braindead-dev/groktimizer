@@ -12,3 +12,25 @@ export function ChatSkeleton() {
     </div>
   );
 }
+
+export function SidebarTreeSkeleton() {
+  return (
+    <div className="sidebar-tree-skeleton" role="status" aria-label="Loading projects">
+      <div className="sidebar-skeleton-row">
+        <Skeleton width="14px" height={14} />
+        <Skeleton width="58%" height={10} />
+        <Skeleton width="7px" height={7} />
+      </div>
+      <div className="sidebar-skeleton-row sidebar-skeleton-row-nested">
+        <Skeleton width="13px" height={13} />
+        <Skeleton width="44%" height={9} />
+        <Skeleton width="7px" height={7} />
+      </div>
+      <div className="sidebar-skeleton-row">
+        <Skeleton width="14px" height={14} />
+        <Skeleton width="48%" height={10} />
+        <Skeleton width="7px" height={7} />
+      </div>
+    </div>
+  );
+}

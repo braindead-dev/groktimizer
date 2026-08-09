@@ -356,6 +356,25 @@ button:disabled {
   padding-bottom: 16px;
 }
 
+.sidebar-tree-skeleton { padding: 0 10px 0 9px; }
+.sidebar-skeleton-row {
+  height: 31px;
+  display: grid;
+  grid-template-columns: 15px minmax(0, 1fr) 7px;
+  align-items: center;
+  gap: 10px;
+}
+.sidebar-skeleton-row-nested { padding-left: 25px; }
+.sidebar-skeleton-row .skeleton-block:last-child { border-radius: 50%; }
+.sidebar-count-skeleton {
+  width: 15px;
+  height: 8px;
+  display: block;
+  margin-left: auto;
+  border-radius: 5px;
+  background: var(--surface-soft);
+}
+
 .tree-row {
   position: relative;
   display: flex;

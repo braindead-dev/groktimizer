@@ -17,6 +17,7 @@ import {
   X,
 } from "lucide-react";
 import { BrandLockup, BrandMark } from "@/components/shared/brand-mark";
+import { SidebarTreeSkeleton } from "@/components/shared/skeleton";
 import { StatusDot } from "@/components/shared/status";
 import { deleteResearchProject } from "@/lib/control-plane-client";
 import type { Agent, Project, ResearchTeam, ViewSelection } from "@/lib/types";
@@ -217,7 +218,7 @@ function ProjectBranch({ project }: { project: Project }) {
 }
 
 export function ProjectSidebar() {
-  const { projects, selection, sidebarOpen, sidebarCollapsed, sidebarWidth } = useResearchState();
+  const { projects, selection, sidebarOpen, sidebarCollapsed, sidebarWidth, controlPlane } = useResearchState();
   const dispatch = useResearchDispatch();
   const activeCount = projects.reduce(
     (count, project) => count + [
@@ -279,7 +280,10 @@ export function ProjectSidebar() {
           title="Live runs"
           onClick={() => dispatch({ type: "select", selection: { type: "activity" } })}
         >
-          <Activity size={15} /> <span className="nav-label">Live runs</span> <span className="nav-count">{activeCount}</span>
+          <Activity size={15} /> <span className="nav-label">Live runs</span>
+          {controlPlane.mode === "loading"
+            ? <span className="sidebar-count-skeleton" aria-hidden />
+            : <span className="nav-count">{activeCount}</span>}
         </button>
       </nav>
 
@@ -287,7 +291,9 @@ export function ProjectSidebar() {
         <span>Projects</span>
       </div>
       <div className="project-tree">
-        {projects.map((project) => <ProjectBranch key={project.id} project={project} />)}
+        {controlPlane.mode === "loading"
+          ? <SidebarTreeSkeleton />
+          : projects.map((project) => <ProjectBranch key={project.id} project={project} />)}
       </div>
 
       <button
