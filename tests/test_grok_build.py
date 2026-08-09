@@ -96,7 +96,8 @@ def test_public_endpoint_requires_dedicated_key(monkeypatch):
 
     validate_auth(ModelConfig())
     assert ModelConfig().base_url == DEFAULT_BASE_URL
-    assert ModelConfig().model == "grok-2"
+    assert ModelConfig().base_url == "https://xwdq0i6koerlhu-8000.proxy.runpod.net/v1"
+    assert ModelConfig().model == "grok-2-fast"
     assert ModelConfig().name == "Groktimized 2"
 
 

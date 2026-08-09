@@ -55,8 +55,9 @@ optimized model globally with one command:
 curl -fsSL https://groktimizer.com/install.sh | sh
 ```
 
-The installer probes the endpoint, backs up and safely updates `~/.grok/config.toml`, registers the
-model everywhere Grok Build discovers models, and selects `Groktimized 2` for new sessions. On
+The installer probes the accelerated `grok-2-fast` deployment, backs up and safely updates
+`~/.grok/config.toml`, registers the model everywhere Grok Build discovers models, and selects
+`Groktimized 2` for new sessions. On
 macOS Apple Silicon it also installs a checksummed, source-available patch of the stock Grok Build
 1.0.0 binary: the model's actual text is purple in the selector, prompt chrome, dashboard, and
 minimal mode, and it appears first in `/model`. The stock binary is left intact and its symlink

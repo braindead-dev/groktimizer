@@ -24,14 +24,15 @@ from urllib.parse import urlparse
 BEGIN_MARKER = "# >>> groktimizer fast model >>>"
 END_MARKER = "# <<< groktimizer fast model <<<"
 LOCAL_HOSTS = {"127.0.0.1", "::1", "localhost"}
-DEFAULT_BASE_URL = "https://z08tqd2khleyx4-8000.proxy.runpod.net/v1"
-DEFAULT_MODEL = "grok-2"
+DEFAULT_BASE_URL = "https://xwdq0i6koerlhu-8000.proxy.runpod.net/v1"
+DEFAULT_MODEL = "grok-2-fast"
 DEFAULT_ALIAS = "groktimized-2"
 DEFAULT_NAME = "Groktimized 2"
 LEGACY_ALIASES = ("groktimizer-fast",)
-MANAGED_DESCRIPTION = "Optimized Grok 2 deployment by Groktimizer"
+MANAGED_DESCRIPTION = "Accelerated Grok 2 deployment by Groktimizer"
 MANAGED_DESCRIPTIONS = {
     MANAGED_DESCRIPTION,
+    "Optimized Grok 2 deployment by Groktimizer",
     "Optimized Grok deployment managed by Groktimizer",
 }
 TRUSTED_PUBLIC_ENDPOINTS = {DEFAULT_BASE_URL}
