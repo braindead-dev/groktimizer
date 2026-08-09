@@ -92,6 +92,46 @@ async def test_collect_snapshot_includes_multiple_projects():
     assert snapshot["agents"][0]["project"] == "alpha"
 
 
+async def test_snapshot_hides_tombstoned_project_during_concurrent_deletion(tmp_path):
+    from groktimizer.core.store import Store
+
+    client = FakeSandboxClient()
+    await client.create(
+        "gtz-deleted-hq-main",
+        "image",
+        "region",
+        agent_labels("deleted", "hq", "main", "main"),
+        {},
+    )
+    cfg = Config(
+        project="active",
+        shared_repo="git@example.com/work.git",
+        tooling_repo="git@example.com/tools.git",
+    )
+    with Store(tmp_path / "gtz.db") as store:
+        store.upsert_project("deleted")
+        store.begin_project_deletion("deleted")
+        snapshot = await collect_snapshot(cfg, client, store)
+    assert [project["project"] for project in snapshot["projects"]] == ["active"]
+    assert snapshot["agents"] == []
+
+
+async def test_sql_only_running_project_is_reported_idle(tmp_path):
+    from groktimizer.core.store import Store
+
+    cfg = Config(
+        project="demo",
+        shared_repo="git@example.com/work.git",
+        tooling_repo="git@example.com/tools.git",
+    )
+    with Store(tmp_path / "gtz.db") as store:
+        store.upsert_project("demo", objective="Make inference faster", status="running")
+        snapshot = await collect_snapshot(cfg, FakeSandboxClient(), store)
+    state = snapshot["projects"][0]["project_state"]
+    assert state["status"] == "idle"
+    assert state["title"] == "Make inference faster"
+
+
 async def test_start_main_orchestrator_refuses_duplicate():
     client = FakeSandboxClient()
     await client.create(
@@ -165,6 +205,7 @@ async def test_snapshot_marks_vanished_agents_terminated(tmp_path):
     client.exec_responses["wc -c"] = ExecResult(stdout="0", exit_code=0)
     cfg = Config(project="demo", shared_repo="git@x:y.git", tooling_repo="https://g/o/r.git")
     with Store(tmp_path / "gtz.db") as store:
+        store.upsert_project("demo")
         store.upsert_agent(
             "gtz-demo-attn-dead1", project="demo", team="attn", name="dead1", role="implementer"
         )

@@ -13,9 +13,11 @@ from groktimizer.core.store import Store
 
 async def ingest_agent(store: Store, client: SandboxClient, agent: AgentInfo) -> str | None:
     sandbox = agent.sandbox_name
-    store.upsert_agent(
+    registered = store.upsert_agent(
         sandbox, project=agent.project, team=agent.team, name=agent.agent, role=agent.role
     )
+    if not registered:
+        return "project deletion is in progress"
     try:
         cursor = store.get_event_cursor(sandbox)
         previous_runtime = store.runtime_for(sandbox)

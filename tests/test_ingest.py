@@ -21,6 +21,7 @@ AGENT = AgentInfo(
 @pytest.fixture
 def store(tmp_path: Path):
     with Store(tmp_path / "gtz.db") as value:
+        value.upsert_project("demo")
         yield value
 
 

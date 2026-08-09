@@ -22,6 +22,7 @@ export interface ControlPlaneSnapshot {
   project: string;
   project_state: {
     status: "idle" | "provisioning" | "running" | "failed" | "stopped";
+    title: string;
     objective: string;
     error: string | null;
   };

@@ -66,9 +66,12 @@ function humanize(value: string) {
 }
 
 function projectLabel(project: string, objective: string) {
-  if (!/[a-f0-9]{6}$/.test(project) || !objective.trim()) return humanize(project);
+  if (!objective.trim()) return humanize(project);
   const trimmed = objective.trim();
-  return trimmed.length > 32 ? `${trimmed.slice(0, 31).trimEnd()}…` : trimmed;
+  if (trimmed.length <= 32) return trimmed;
+  const prefix = trimmed.slice(0, 31).trimEnd();
+  const lastWord = prefix.lastIndexOf(" ");
+  return `${lastWord > 0 ? prefix.slice(0, lastWord) : prefix}…`;
 }
 
 function placeholderAgent(id: string, name: string, role: Agent["role"], task: string): Agent {
@@ -249,7 +252,8 @@ function projectFromSnapshot(snapshot: ControlPlaneSnapshot, baseline: BaselineS
         .map(({ normalized }) => normalized),
     };
   });
-  const label = projectLabel(snapshot.project, snapshot.project_state.objective);
+  const label = snapshot.project_state.title
+    || projectLabel(snapshot.project, snapshot.project_state.objective);
   return {
     ...base,
     id: `live-${snapshot.project}`,

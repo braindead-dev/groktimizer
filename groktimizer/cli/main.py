@@ -104,6 +104,12 @@ async def collect_snapshot(cfg: Config, client, store: Store | None = None) -> d
     ]
     ingest_errors: dict[str, str] = {}
     if store is not None:
+        deleting_projects = {
+            project["name"]
+            for project in store.list_projects(include_deleted=True)
+            if project["status"] in {"deleting", "deleted"}
+        }
+        agents = [agent for agent in agents if agent.project not in deleting_projects]
         known_projects = {project["name"] for project in store.list_projects()}
         for project_name in {agent.project for agent in agents} - known_projects:
             store.upsert_project(project_name, status="running")
@@ -115,6 +121,9 @@ async def collect_snapshot(cfg: Config, client, store: Store | None = None) -> d
             for agent, result in zip(agents, ingest_results, strict=True)
             if result
         }
+        for project in store.list_projects():
+            if not project["objective"]:
+                store.recover_project_objective(project["name"])
         live = {agent.sandbox_name for agent in agents}
         for project in store.list_projects():
             for row in store.list_agents(project["name"]):
@@ -154,13 +163,26 @@ async def collect_snapshot(cfg: Config, client, store: Store | None = None) -> d
     for project_name in sorted(project_names):
         project_agents = [agent for agent in serialized_agents if agent["project"] == project_name]
         stored_project = stored_projects.get(project_name)
+        if project_agents:
+            project_status = (
+                "provisioning"
+                if any(agent["provisioning"] for agent in project_agents)
+                else "running"
+            )
+        elif stored_project and stored_project["status"] in {
+            "provisioning",
+            "failed",
+            "stopped",
+        }:
+            project_status = stored_project["status"]
+        else:
+            project_status = "idle"
         projects.append(
             {
                 "project": project_name,
                 "project_state": {
-                    "status": stored_project["status"]
-                    if stored_project
-                    else ("running" if project_agents else "idle"),
+                    "status": project_status,
+                    "title": stored_project["title"] if stored_project else project_name,
                     "objective": stored_project["objective"] if stored_project else "",
                     "error": stored_project["error"] if stored_project else None,
                 },
@@ -273,7 +295,13 @@ def start(brief: str, project: str | None = typer.Option(None, "--project")):
         cfg = cfg.model_copy(update={"project": project})
     envs = {k: v for k in PASSTHROUGH_ENVS if (v := os.environ.get(k))}
     with Store() as store:
-        store.upsert_project(cfg.project, objective=brief, status="provisioning")
+        if not store.upsert_project(
+            cfg.project,
+            objective=brief,
+            status="provisioning",
+            revive_deleted=True,
+        ):
+            raise RuntimeError(f"project {cfg.project} is currently being deleted")
         try:
             name = asyncio.run(start_main_orchestrator(cfg, _client(cfg), brief, envs, store))
         except Exception as error:
@@ -457,10 +485,21 @@ def delete_project(project: str):
     client = _client(cfg)
 
     async def _delete(store: Store):
+        store.begin_project_deletion(cfg.project)
         agents = await Registry(client, cfg.project).list_agents()
+        errors: list[str] = []
         for agent in agents:
-            await ingest_agent(store, client, agent)
-            await client.delete(agent.sandbox_name)
+            try:
+                await client.delete(agent.sandbox_name)
+            except Exception as error:  # noqa: BLE001 -- finish every independent cleanup.
+                errors.append(f"{agent.sandbox_name}: {error}")
+        if errors:
+            store.set_project_status(
+                cfg.project,
+                "failed",
+                f"Project deletion failed for {len(errors)} sandbox(es)",
+            )
+            raise RuntimeError("; ".join(errors))
         store.delete_project(cfg.project)
         return len(agents)
 

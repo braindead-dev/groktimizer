@@ -6,11 +6,12 @@ import sqlite3
 from datetime import UTC, datetime
 from pathlib import Path
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS projects (
   name       TEXT PRIMARY KEY,
+  title      TEXT NOT NULL DEFAULT '',
   objective  TEXT NOT NULL DEFAULT '',
   status     TEXT NOT NULL DEFAULT 'provisioning',
   error      TEXT,
@@ -72,6 +73,19 @@ def _now() -> str:
     return datetime.now(UTC).isoformat()
 
 
+def project_title(name: str, objective: str) -> str:
+    """Return the stable display title persisted for a project."""
+    cleaned = " ".join(objective.split())
+    if cleaned:
+        if len(cleaned) <= 32:
+            return cleaned
+        prefix = cleaned[:31].rstrip()
+        if " " in prefix:
+            prefix = prefix.rsplit(" ", 1)[0]
+        return f"{prefix}…"
+    return name.replace("-", " ").replace("_", " ").title()
+
+
 def _columns(db: sqlite3.Connection, table: str) -> set[str]:
     return {str(row["name"]) for row in db.execute(f"PRAGMA table_info({table})")}  # noqa: S608
 
@@ -96,12 +110,26 @@ class Store:
         if existing and version == 0 and legacy_tables.issubset(tables):
             self._backup_legacy_store(version)
             self._migrate_legacy_store()
+        elif existing and version == 2:
+            self._backup_legacy_store(version)
+            with self.db:
+                self.db.execute(
+                    "ALTER TABLE projects ADD COLUMN title TEXT NOT NULL DEFAULT ''"
+                )
+                self.db.execute(f"PRAGMA user_version={SCHEMA_VERSION}")
         elif existing and version != SCHEMA_VERSION:
             raise RuntimeError(
                 f"unsupported store schema {version}; delete {self.path} "
                 f"for schema {SCHEMA_VERSION}"
             )
         self.db.executescript(_SCHEMA)
+        for row in self.db.execute(
+            "SELECT name, objective FROM projects WHERE title=''"
+        ).fetchall():
+            self.db.execute(
+                "UPDATE projects SET title=? WHERE name=?",
+                (project_title(str(row["name"]), str(row["objective"])), row["name"]),
+            )
         self.db.execute(f"PRAGMA user_version={SCHEMA_VERSION}")
         self.db.commit()
 
@@ -126,6 +154,10 @@ class Store:
                 )
                 self.db.execute("UPDATE projects SET updated_at=created_at WHERE updated_at='' ")
             self.db.execute("UPDATE projects SET status='running' WHERE status='active'")
+            if "title" not in project_columns:
+                self.db.execute(
+                    "ALTER TABLE projects ADD COLUMN title TEXT NOT NULL DEFAULT ''"
+                )
 
             if "runtime_id" not in agent_columns:
                 self.db.execute(
@@ -167,20 +199,42 @@ class Store:
     # -- projects ---------------------------------------------------------
 
     def upsert_project(
-        self, name: str, objective: str = "", status: str = "running", error: str | None = None
-    ) -> None:
+        self,
+        name: str,
+        objective: str = "",
+        status: str = "running",
+        error: str | None = None,
+        *,
+        revive_deleted: bool = False,
+    ) -> bool:
         timestamp = _now()
         with self.db:
-            self.db.execute(
-                "INSERT INTO projects (name, objective, status, error, created_at, updated_at)"
-                " VALUES (?, ?, ?, ?, ?, ?)"
+            cursor = self.db.execute(
+                "INSERT INTO projects "
+                "(name, title, objective, status, error, created_at, updated_at)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?)"
                 " ON CONFLICT(name) DO UPDATE SET"
+                "   title = CASE WHEN excluded.objective != '' THEN excluded.title"
+                "                WHEN projects.title = '' THEN excluded.title"
+                "                ELSE projects.title END,"
                 "   objective = CASE WHEN excluded.objective != '' THEN excluded.objective"
                 "                    ELSE projects.objective END,"
                 "   status = excluded.status, error = excluded.error,"
-                "   updated_at = excluded.updated_at, stopped_at = NULL",
-                (name, objective, status, error, timestamp, timestamp),
+                "   updated_at = excluded.updated_at, stopped_at = NULL"
+                " WHERE projects.status != 'deleting'"
+                "   AND (projects.status != 'deleted' OR ?)",
+                (
+                    name,
+                    project_title(name, objective),
+                    objective,
+                    status,
+                    error,
+                    timestamp,
+                    timestamp,
+                    revive_deleted,
+                ),
             )
+        return cursor.rowcount > 0
 
     def set_project_status(self, name: str, status: str, error: str | None = None) -> None:
         with self.db:
@@ -197,8 +251,21 @@ class Store:
                 (_now(), _now(), name),
             )
 
+    def begin_project_deletion(self, name: str) -> None:
+        """Hide a project and block polling from re-ingesting it during teardown."""
+        timestamp = _now()
+        with self.db:
+            self.db.execute(
+                "INSERT INTO projects "
+                "(name, title, objective, status, error, created_at, updated_at)"
+                " VALUES (?, '', '', 'deleting', NULL, ?, ?)"
+                " ON CONFLICT(name) DO UPDATE SET status='deleting', error=NULL,"
+                " updated_at=excluded.updated_at",
+                (name, timestamp, timestamp),
+            )
+
     def delete_project(self, name: str) -> None:
-        """Remove a project and its persisted agent conversation state."""
+        """Remove project activity while retaining a deletion tombstone."""
         with self.db:
             self.db.execute(
                 "DELETE FROM turn_events WHERE sandbox IN "
@@ -211,22 +278,55 @@ class Store:
                 (name,),
             )
             self.db.execute("DELETE FROM agents WHERE project=?", (name,))
-            self.db.execute("DELETE FROM projects WHERE name=?", (name,))
+            self.db.execute(
+                "UPDATE projects SET title='', objective='', status='deleted', error=NULL,"
+                " stopped_at=?, updated_at=? WHERE name=?",
+                (_now(), _now(), name),
+            )
 
-    def list_projects(self) -> list[dict]:
-        rows = self.db.execute("SELECT * FROM projects ORDER BY created_at").fetchall()
+    def recover_project_objective(self, name: str) -> str | None:
+        """Recover a missing objective/title from the main agent's persisted kickoff turn."""
+        row = self.db.execute(
+            "SELECT turns.display_prompt FROM turns"
+            " JOIN agents ON agents.sandbox=turns.sandbox"
+            " WHERE agents.project=? AND agents.role='main'"
+            " AND turns.sender_kind='system' AND TRIM(turns.display_prompt) != ''"
+            " ORDER BY turns.created_at LIMIT 1",
+            (name,),
+        ).fetchone()
+        if not row:
+            return None
+        objective = str(row["display_prompt"]).strip()
+        with self.db:
+            self.db.execute(
+                "UPDATE projects SET objective=?, title=?, updated_at=?"
+                " WHERE name=? AND objective='' AND status NOT IN ('deleting','deleted')",
+                (objective, project_title(name, objective), _now(), name),
+            )
+        return objective
+
+    def list_projects(self, *, include_deleted: bool = False) -> list[dict]:
+        where = "" if include_deleted else "WHERE status NOT IN ('deleting','deleted')"
+        rows = self.db.execute(
+            f"SELECT * FROM projects {where} ORDER BY created_at"  # noqa: S608
+        ).fetchall()
         return [dict(r) for r in rows]
 
     # -- agents -----------------------------------------------------------
 
-    def upsert_agent(self, sandbox: str, *, project: str, team: str, name: str, role: str) -> None:
+    def upsert_agent(
+        self, sandbox: str, *, project: str, team: str, name: str, role: str
+    ) -> bool:
         with self.db:
-            self.db.execute(
+            cursor = self.db.execute(
                 "INSERT INTO agents (sandbox, project, team, name, role, created_at)"
-                " VALUES (?, ?, ?, ?, ?, ?)"
+                " SELECT ?, ?, ?, ?, ?, ?"
+                " WHERE EXISTS (SELECT 1 FROM projects WHERE name=?"
+                " AND status NOT IN ('deleting','deleted'))"
                 " ON CONFLICT(sandbox) DO UPDATE SET terminated_at = NULL",
-                (sandbox, project, team, name, role, _now()),
+                (sandbox, project, team, name, role, _now(), project),
             )
+        return cursor.rowcount > 0
 
     def mark_agent_terminated(self, sandbox: str) -> None:
         with self.db:
