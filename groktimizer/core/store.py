@@ -6,7 +6,7 @@ import sqlite3
 from datetime import UTC, datetime
 from pathlib import Path
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS projects (
@@ -62,6 +62,13 @@ CREATE TABLE IF NOT EXISTS turn_events (
 );
 CREATE INDEX IF NOT EXISTS idx_turn_events_sandbox_seq
   ON turn_events(sandbox, remote_seq);
+CREATE TABLE IF NOT EXISTS research_documents (
+  project        TEXT PRIMARY KEY,
+  schema_version INTEGER NOT NULL,
+  document_json  TEXT NOT NULL,
+  updated_at     TEXT NOT NULL,
+  FOREIGN KEY(project) REFERENCES projects(name) ON DELETE CASCADE
+);
 """
 
 
@@ -110,12 +117,14 @@ class Store:
         if existing and version == 0 and legacy_tables.issubset(tables):
             self._backup_legacy_store(version)
             self._migrate_legacy_store()
-        elif existing and version == 2:
+        elif existing and version in {2, 3}:
             self._backup_legacy_store(version)
             with self.db:
-                self.db.execute(
-                    "ALTER TABLE projects ADD COLUMN title TEXT NOT NULL DEFAULT ''"
-                )
+                if version == 2:
+                    self.db.execute(
+                        "ALTER TABLE projects ADD COLUMN title TEXT NOT NULL DEFAULT ''"
+                    )
+                self.db.executescript(_SCHEMA)
                 self.db.execute(f"PRAGMA user_version={SCHEMA_VERSION}")
         elif existing and version != SCHEMA_VERSION:
             raise RuntimeError(
@@ -243,6 +252,13 @@ class Store:
                 (status, error, _now(), name),
             )
 
+    def set_project_title(self, name: str, title: str) -> None:
+        with self.db:
+            self.db.execute(
+                "UPDATE projects SET title=?, updated_at=? WHERE name=?",
+                (title.strip(), _now(), name),
+            )
+
     def mark_project_stopped(self, name: str) -> None:
         with self.db:
             self.db.execute(
@@ -278,6 +294,7 @@ class Store:
                 (name,),
             )
             self.db.execute("DELETE FROM agents WHERE project=?", (name,))
+            self.db.execute("DELETE FROM research_documents WHERE project=?", (name,))
             self.db.execute(
                 "UPDATE projects SET title='', objective='', status='deleted', error=NULL,"
                 " stopped_at=?, updated_at=? WHERE name=?",
@@ -311,6 +328,36 @@ class Store:
             f"SELECT * FROM projects {where} ORDER BY created_at"  # noqa: S608
         ).fetchall()
         return [dict(r) for r in rows]
+
+    # -- validated research documents ------------------------------------
+
+    def upsert_research_document(
+        self, project: str, document_json: str, schema_version: int = 1
+    ) -> None:
+        with self.db:
+            self.db.execute(
+                "INSERT INTO research_documents(project, schema_version, document_json, updated_at)"
+                " VALUES (?, ?, ?, ?)"
+                " ON CONFLICT(project) DO UPDATE SET"
+                " schema_version=excluded.schema_version,"
+                " document_json=excluded.document_json, updated_at=excluded.updated_at",
+                (project, schema_version, document_json, _now()),
+            )
+
+    def research_document(self, project: str) -> dict | None:
+        row = self.db.execute(
+            "SELECT document_json FROM research_documents WHERE project=?", (project,)
+        ).fetchone()
+        if not row:
+            return None
+        try:
+            value = json.loads(row["document_json"])
+        except (json.JSONDecodeError, TypeError):
+            return None
+        return value if isinstance(value, dict) else None
+
+    def is_persistent_agent(self, sandbox: str) -> bool:
+        return self.runtime_for(sandbox).get("transport") == "persistent"
 
     # -- agents -----------------------------------------------------------
 

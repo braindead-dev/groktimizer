@@ -17,6 +17,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from contextlib import asynccontextmanager, suppress
+from datetime import UTC, datetime
 from importlib.metadata import version
 from pathlib import Path
 from typing import Annotated, Any
@@ -178,7 +179,9 @@ async def run_gtz(*args: str, timeout: float = 120) -> str:
 
 
 def _configured_repo(cfg: Config) -> tuple[str, str]:
-    parsed = urllib.parse.urlparse(cfg.shared_repo.replace("git@github.com:", "https://github.com/"))
+    parsed = urllib.parse.urlparse(
+        cfg.shared_repo.replace("git@github.com:", "https://github.com/")
+    )
     parts = parsed.path.removesuffix(".git").strip("/").split("/")
     if parsed.hostname != "github.com" or len(parts) != 2:
         raise ValueError("shared_repo must be a GitHub repository")
@@ -312,9 +315,7 @@ async def require_api_token(
     expected = _require_secret("GTZ_API_TOKEN")
     prefix = "Bearer "
     supplied = (
-        authorization[len(prefix) :]
-        if authorization and authorization.startswith(prefix)
-        else ""
+        authorization[len(prefix) :] if authorization and authorization.startswith(prefix) else ""
     )
     if not hmac.compare_digest(expected, supplied):
         raise ApiError(401, "Unauthorized")
@@ -382,9 +383,12 @@ async def _agent_stream(
     after: int,
     runtime_id: str | None,
 ):
+    persistent_runtime: dict[str, Any] | None = None
     if after == 0:
         with Store() as store:
             initial = store.conversation_for(sandbox)
+            if store.is_persistent_agent(sandbox):
+                persistent_runtime = initial["runtime"]
         if initial["turns"] or initial["events"] or initial["runtime_id"]:
             data = {
                 "runtime_id": initial["runtime_id"],
@@ -399,6 +403,33 @@ async def _agent_stream(
             )
             after = int(initial["cursor"])
             runtime_id = str(initial["runtime_id"] or "") or runtime_id
+
+    if persistent_runtime is None:
+        with Store() as store:
+            if store.is_persistent_agent(sandbox):
+                persistent_runtime = store.runtime_for(sandbox)
+    if persistent_runtime is not None:
+        yield _sse({"type": "connection", "data": {"mode": "live"}})
+        yield _sse(
+            {
+                "type": "status",
+                "data": {
+                    "running": bool(persistent_runtime.get("running", True)),
+                    "provisioning": False,
+                    "log_mtime": time.time(),
+                    "turn_status": persistent_runtime.get("turn_status", "running"),
+                    "active_turn_id": persistent_runtime.get("active_turn_id"),
+                    "queued": int(persistent_runtime.get("queued", 0)),
+                    "cursor": int(persistent_runtime.get("cursor", after)),
+                    "session_id": persistent_runtime.get("session_id"),
+                    "runtime_id": persistent_runtime.get("runtime_id"),
+                },
+            }
+        )
+        while not await request.is_disconnected():
+            yield _sse({"type": "heartbeat", "data": {"at": datetime.now(UTC).isoformat()}})
+            await asyncio.sleep(5)
+        return
 
     args = ["watch", sandbox, "--after", str(after)]
     if runtime_id:

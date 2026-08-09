@@ -68,14 +68,15 @@ def test_deletion_tombstone_blocks_concurrent_reingestion(store):
     store.begin_project_deletion("demo")
     assert store.list_projects() == []
     assert store.upsert_project("demo", status="running") is False
-    assert store.upsert_agent(
-        "sb", project="demo", team="hq", name="main", role="main"
-    ) is False
+    assert store.upsert_agent("sb", project="demo", team="hq", name="main", role="main") is False
     store.delete_project("demo")
     assert store.list_projects(include_deleted=True)[0]["status"] == "deleted"
-    assert store.upsert_project(
-        "demo", objective="A new run", status="provisioning", revive_deleted=True
-    ) is True
+    assert (
+        store.upsert_project(
+            "demo", objective="A new run", status="provisioning", revive_deleted=True
+        )
+        is True
+    )
     assert store.list_projects()[0]["title"] == "A new run"
 
 
@@ -191,7 +192,7 @@ def test_store_migrates_original_unversioned_schema(tmp_path):
         )
 
     with Store(path) as migrated:
-        assert migrated.db.execute("PRAGMA user_version").fetchone()[0] == 3
+        assert migrated.db.execute("PRAGMA user_version").fetchone()[0] == 4
         assert migrated.list_projects()[0]["status"] == "running"
         assert migrated.list_projects()[0]["updated_at"] == "2026-01-01"
         assert migrated.conversation_for("gtz-demo-hq-main")["turns"][0]["prompt"] == "Try batching"
@@ -225,8 +226,35 @@ def test_store_migrates_v2_titles_without_losing_projects(tmp_path):
         project = migrated.list_projects()[0]
         assert project["objective"] == "Make inference faster"
         assert project["title"] == "Make inference faster"
-        assert migrated.db.execute("PRAGMA user_version").fetchone()[0] == 3
+        assert migrated.db.execute("PRAGMA user_version").fetchone()[0] == 4
     assert len(list(tmp_path.glob("v2.db.schema-v2-*.bak"))) == 1
+
+
+def test_store_migrates_v3_and_persists_research_documents(tmp_path):
+    import sqlite3
+
+    path = tmp_path / "v3.db"
+    with sqlite3.connect(path) as db:
+        db.executescript(
+            """
+            CREATE TABLE projects (
+              name TEXT PRIMARY KEY, title TEXT NOT NULL DEFAULT '',
+              objective TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT 'running',
+              error TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, stopped_at TEXT
+            );
+            INSERT INTO projects VALUES (
+              'demo', 'Demo', 'Measure everything', 'running', NULL,
+              '2026-01-01', '2026-01-01', NULL
+            );
+            PRAGMA user_version=3;
+            """
+        )
+
+    with Store(path) as migrated:
+        migrated.upsert_research_document("demo", '{"title":"Measured program"}')
+        assert migrated.db.execute("PRAGMA user_version").fetchone()[0] == 4
+        assert migrated.research_document("demo") == {"title": "Measured program"}
+    assert len(list(tmp_path.glob("v3.db.schema-v3-*.bak"))) == 1
 
 
 def test_store_rejects_an_unknown_unversioned_schema(tmp_path):

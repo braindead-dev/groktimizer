@@ -16,6 +16,7 @@ from groktimizer.core.bootstrap import PASSTHROUGH_ENVS, spawn_agent
 from groktimizer.core.gpu import BudgetedRunPod
 from groktimizer.core.ingest import ingest_agent
 from groktimizer.core.registry import AgentInfo, Registry
+from groktimizer.core.research_record import ResearchRecord
 from groktimizer.core.sandbox import MAIN_TEAM, branch_name
 from groktimizer.core.store import Store
 
@@ -127,7 +128,11 @@ async def collect_snapshot(cfg: Config, client, store: Store | None = None) -> d
         live = {agent.sandbox_name for agent in agents}
         for project in store.list_projects():
             for row in store.list_agents(project["name"]):
-                if row["terminated_at"] is None and row["sandbox"] not in live:
+                if (
+                    row["terminated_at"] is None
+                    and row["sandbox"] not in live
+                    and not store.is_persistent_agent(row["sandbox"])
+                ):
                     store.mark_agent_terminated(row["sandbox"])
     status_results = await asyncio.gather(
         *(monitor.agent_status(client, agent.sandbox_name) for agent in agents),
@@ -156,8 +161,14 @@ async def collect_snapshot(cfg: Config, client, store: Store | None = None) -> d
             }
         )
     stored_projects: dict[str, dict] = {}
+    research_documents: dict[str, dict] = {}
     if store is not None:
         stored_projects = {project["name"]: project for project in store.list_projects()}
+        research_documents = {
+            project: document
+            for project in stored_projects
+            if (document := store.research_document(project)) is not None
+        }
     project_names = set(stored_projects) | {agent.project for agent in agents} | {cfg.project}
     projects = []
     for project_name in sorted(project_names):
@@ -169,6 +180,8 @@ async def collect_snapshot(cfg: Config, client, store: Store | None = None) -> d
                 if any(agent["provisioning"] for agent in project_agents)
                 else "running"
             )
+        elif project_name in research_documents:
+            project_status = "running"
         elif stored_project and stored_project["status"] in {
             "provisioning",
             "failed",
@@ -187,6 +200,7 @@ async def collect_snapshot(cfg: Config, client, store: Store | None = None) -> d
                     "error": stored_project["error"] if stored_project else None,
                 },
                 "agents": project_agents,
+                "record": research_documents.get(project_name),
             }
         )
     configured = next(project for project in projects if project["project"] == cfg.project)
@@ -330,6 +344,31 @@ def snapshot():
     with Store() as store:
         data = asyncio.run(collect_snapshot(cfg, _client(cfg), store))
     typer.echo(json.dumps(data, separators=(",", ":")))
+
+
+@app.command("import-record")
+def import_record(
+    path: Path,
+    exclusive: bool = typer.Option(
+        False,
+        "--exclusive",
+        help="Keep only projects represented by this record in the durable store",
+    ),
+):
+    """Validate and idempotently install a durable research record."""
+    record = ResearchRecord.from_path(path)
+    with Store() as store:
+        record.install(store, exclusive=exclusive)
+    typer.echo(
+        json.dumps(
+            {
+                "installed": True,
+                "title": record.title,
+                "projects": [project.id for project in record.projects],
+            },
+            separators=(",", ":"),
+        )
+    )
 
 
 @app.command()

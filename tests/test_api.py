@@ -5,6 +5,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from groktimizer import api
+from groktimizer.core.research_record import ResearchRecord
 from groktimizer.core.store import Store
 
 
@@ -39,7 +40,7 @@ def test_health_and_authentication(api_env: Path):
     with TestClient(api.create_app()) as client:
         health = client.get("/healthz")
         assert health.status_code == 200
-        assert health.json()["schemaVersion"] == 3
+        assert health.json()["schemaVersion"] == 4
 
         unauthorized = client.get("/v1/projects/history")
         assert unauthorized.status_code == 401
@@ -125,3 +126,29 @@ def test_stream_ticket_endpoint_returns_only_configured_backend_origin(api_env: 
     )
     assert "after=7" in response.json()["url"]
     assert "runtime_id=runtime-1" in response.json()["url"]
+
+
+@pytest.mark.asyncio
+async def test_persistent_agent_stream_replays_history_without_remote_runner(api_env: Path):
+    record = ResearchRecord.from_path(Path("research/grok2-program.json"))
+    with Store(api_env) as store:
+        record.install(store)
+
+    class DisconnectedRequest:
+        async def is_disconnected(self):
+            return True
+
+    chunks = [
+        chunk
+        async for chunk in api._agent_stream(  # noqa: SLF001
+            DisconnectedRequest(),
+            "gtz-grok2performance-speculation-ngram",
+            0,
+            None,
+        )
+    ]
+    payload = b"".join(chunks).decode()
+    assert '"type":"snapshot"' in payload
+    assert '"type":"connection"' in payload
+    assert '"type":"status"' in payload
+    assert '"turn_status":"running"' in payload
