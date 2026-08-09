@@ -51,13 +51,15 @@ install -d -o groktimizer -g groktimizer -m 0750 /var/lib/groktimizer
 install -d -o root -g groktimizer -m 0750 /etc/groktimizer
 
 if [[ ! -d /opt/groktimizer/.git ]]; then
-  git clone --branch "$REPOSITORY_REF" --single-branch "$REPOSITORY_URL" /opt/groktimizer
+  install -d -o groktimizer -g groktimizer -m 0755 /opt/groktimizer
+  runuser -u groktimizer -- git clone --branch "$REPOSITORY_REF" --single-branch \
+    "$REPOSITORY_URL" /opt/groktimizer
 else
-  git -C /opt/groktimizer fetch origin "$REPOSITORY_REF"
-  git -C /opt/groktimizer checkout -B "$REPOSITORY_REF" "origin/$REPOSITORY_REF"
+  runuser -u groktimizer -- git -C /opt/groktimizer fetch origin "$REPOSITORY_REF"
+  runuser -u groktimizer -- git -C /opt/groktimizer checkout -B "$REPOSITORY_REF" \
+    "origin/$REPOSITORY_REF"
 fi
-git -C /opt/groktimizer reset --hard "origin/$REPOSITORY_REF"
-chown -R groktimizer:groktimizer /opt/groktimizer
+runuser -u groktimizer -- git -C /opt/groktimizer reset --hard "origin/$REPOSITORY_REF"
 runuser -u groktimizer -- uv sync --directory /opt/groktimizer --frozen --no-dev
 
 install -d -o root -g root -m 0755 /usr/local/libexec
