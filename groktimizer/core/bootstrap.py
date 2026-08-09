@@ -77,6 +77,7 @@ if git remote get-url origin >/dev/null 2>&1; then
 else
   git checkout -B "$GTZ_BRANCH"
 fi
+grok mcp remove groktimizer >/dev/null 2>&1 || true
 grok mcp add groktimizer -- python3 -m groktimizer.mcp
 mkdir -p /var/log/gtz /var/lib/gtz
 touch /var/log/gtz/runner.log

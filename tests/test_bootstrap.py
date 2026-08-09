@@ -33,6 +33,7 @@ async def test_spawn_creates_configured_sandbox():
     setup = client.files[(name, "/opt/gtz/setup.sh")]
     assert "x.ai/cli/install.sh" in setup
     assert "tmux new-session" in setup
+    assert "grok mcp remove groktimizer" in setup
     assert 'git checkout -B "$GTZ_BRANCH"' in setup
     assert 'git push -u origin "$GTZ_BRANCH"' in setup
     # setup executed

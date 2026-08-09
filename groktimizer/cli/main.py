@@ -379,7 +379,7 @@ def repair_chat(sandbox: str):
     """Non-destructively install the queued chat runner into an existing sandbox."""
     cfg = _cfg()
     _require_project_sandbox(cfg, sandbox)
-    result = asyncio.run(monitor.repair_runtime(_client(cfg), sandbox))
+    result = asyncio.run(monitor.repair_runtime(_client(cfg), sandbox, cfg))
     typer.echo(json.dumps(result, separators=(",", ":")))
 
 

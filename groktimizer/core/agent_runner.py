@@ -273,10 +273,20 @@ def _content_text(value: Any) -> str:
     if isinstance(value, str):
         return value
     if isinstance(value, dict):
-        if isinstance(value.get("text"), str):
-            return value["text"]
-        if value.get("type") == "content":
-            return _content_text(value.get("content"))
+        for key in (
+            "text",
+            "content",
+            "output",
+            "OkayOutput",
+            "ErrorOutput",
+            "error",
+            "message",
+        ):
+            if key in value:
+                content = _content_text(value.get(key))
+                if content:
+                    return content
+        return json.dumps(value, indent=2, ensure_ascii=False)
     if isinstance(value, list):
         return "\n".join(filter(None, (_content_text(item) for item in value)))
     return ""
@@ -295,21 +305,39 @@ def normalize_stream_event(raw: dict[str, Any]) -> tuple[str, dict[str, Any]] | 
     if kind == "agent_thought_chunk":
         return "reasoning", {"text": _content_text(update.get("content"))}
     if kind == "tool_call":
+        raw_input = update.get("rawInput")
+        tool_name = raw_input.get("tool_name") if isinstance(raw_input, dict) else None
+        tool_input = (
+            raw_input.get("tool_input", raw_input)
+            if isinstance(raw_input, dict)
+            else raw_input
+        )
         return "tool", {
             "toolCallId": update.get("toolCallId"),
-            "title": update.get("title") or update.get("kind") or "Tool call",
+            "title": tool_name or update.get("title") or update.get("kind") or "Tool call",
             "kind": update.get("kind"),
             "status": update.get("status") or "pending",
-            "input": update.get("rawInput"),
+            "input": tool_input,
         }
     if kind == "tool_call_update":
-        return "tool", {
+        payload = {
             "toolCallId": update.get("toolCallId"),
-            "title": update.get("title") or update.get("kind") or "Tool call",
-            "kind": update.get("kind"),
             "status": update.get("status") or "in_progress",
-            "content": _content_text(update.get("content")),
         }
+        title = update.get("title") or update.get("kind")
+        if title:
+            payload["title"] = title
+        raw_input = update.get("rawInput")
+        if raw_input is not None:
+            payload["input"] = (
+                raw_input.get("tool_input", raw_input)
+                if isinstance(raw_input, dict)
+                else raw_input
+            )
+        content = _content_text(update.get("content") or update.get("rawOutput"))
+        if content:
+            payload["content"] = content
+        return "tool", payload
     if kind == "turn_completed":
         return "turn_completed", {
             "stopReason": update.get("stop_reason"),

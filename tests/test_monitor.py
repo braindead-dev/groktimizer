@@ -2,6 +2,7 @@ import json
 
 import pytest
 
+from groktimizer.config import Config
 from groktimizer.core.monitor import (
     agent_status,
     repair_runtime,
@@ -137,6 +138,51 @@ async def test_repair_restarts_current_runtime_without_session_discovery():
         exit_code=0,
     )
     result = await repair_runtime(client, NAME)
-    assert result == {"repaired": True, "session_id": "session-1"}
+    assert result == {
+        "repaired": True,
+        "session_id": "session-1",
+        "reinitialized": False,
+    }
     assert any("--session-id session-1 --started" in command for _, command in client.execs)
     assert not any(".grok/sessions" in command for _, command in client.execs)
+
+
+async def test_repair_completes_legacy_bootstrap_with_current_config():
+    class LegacyClient(FakeSandboxClient):
+        exports = 0
+
+        async def exec(self, name, command, timeout_s=120):
+            if "agent_runner.py export" in command:
+                self.exports += 1
+                if self.exports == 1:
+                    return ExecResult(stdout="", exit_code=0)
+                return ExecResult(
+                    stdout=(
+                        '{"runtime_id":"runtime-new","session_id":"session-new",'
+                        '"cursor":1,"turns":[],"events":[]}\n'
+                    ),
+                    exit_code=0,
+                )
+            if "find \"$HOME/.grok/sessions" in command:
+                return ExecResult(stdout="legacy-session\n", exit_code=0)
+            return await super().exec(name, command, timeout_s)
+
+    client = LegacyClient()
+    cfg = Config(
+        project="demo",
+        shared_repo="https://github.com/o/research.git",
+        tooling_repo="https://github.com/o/groktimizer.git",
+    )
+    result = await repair_runtime(client, NAME, cfg)
+    assert result == {
+        "repaired": True,
+        "session_id": "session-new",
+        "reinitialized": True,
+    }
+    assert (NAME, "/opt/gtz/agent_runner.py") in client.files
+    upgrade_command = next(
+        command for _, command in client.execs if "pip install --quiet" in command
+    )
+    assert "https://github.com/o/groktimizer.git" in upgrade_command
+    assert "--session-id legacy-session --started" in upgrade_command
+    assert "git checkout" not in upgrade_command

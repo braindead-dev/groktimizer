@@ -15,10 +15,11 @@ export async function POST(
     return NextResponse.json({ error: "Control plane is not configured" }, { status: 503 });
   }
   try {
-    const stdout = await runGtz(["repair-chat", sandbox], 60_000);
+    const stdout = await runGtz(["repair-chat", sandbox], 900_000);
     const result = JSON.parse(stdout.trim().split("\n").at(-1) ?? "{}") as {
       repaired: boolean;
       session_id: string;
+      reinitialized?: boolean;
     };
     return NextResponse.json(result);
   } catch {

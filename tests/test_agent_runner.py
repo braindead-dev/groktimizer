@@ -87,6 +87,46 @@ def test_normalizes_structured_grok_updates(monkeypatch, tmp_path):
     assert tool[1]["content"] == "ok"
 
 
+def test_normalizes_mcp_tool_name_and_raw_output():
+    call = agent_runner.normalize_stream_event(
+        {
+            "method": "session/update",
+            "params": {
+                "update": {
+                    "sessionUpdate": "tool_call",
+                    "toolCallId": "call-1",
+                    "title": "use_tool",
+                    "rawInput": {
+                        "tool_name": "groktimizer__list_agents",
+                        "tool_input": {},
+                    },
+                }
+            },
+        }
+    )
+    result = agent_runner.normalize_stream_event(
+        {
+            "method": "session/update",
+            "params": {
+                "update": {
+                    "sessionUpdate": "tool_call_update",
+                    "toolCallId": "call-1",
+                    "status": "completed",
+                    "rawOutput": {
+                        "type": "MCP",
+                        "tool_name": "list_agents",
+                        "output": {"OkayOutput": "attn, gemm"},
+                    },
+                }
+            },
+        }
+    )
+    assert call[1]["title"] == "groktimizer__list_agents"
+    assert call[1]["input"] == {}
+    assert result[1]["content"] == "attn, gemm"
+    assert "title" not in result[1]
+
+
 def test_restart_marks_inflight_turn_failed(monkeypatch, tmp_path):
     use_temp_db(monkeypatch, tmp_path)
     agent_runner.init_runtime("session-1", started=True)

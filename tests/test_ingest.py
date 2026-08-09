@@ -98,7 +98,7 @@ async def test_ingest_rejects_legacy_runner_without_upgrading(store):
         stdout=json.dumps(payload) + "\n", exit_code=0
     )
     error = await ingest_agent(store, client, AGENT)
-    assert error == "unsupported legacy agent runner; recreate the sandbox"
+    assert error == "legacy agent runner detected; upgrade the sandbox"
     assert not client.files
 
 

@@ -21,9 +21,9 @@ async def ingest_agent(store: Store, client: SandboxClient, agent: AgentInfo) ->
         previous_runtime = store.runtime_for(sandbox)
         runtime = await monitor.runtime_snapshot(client, sandbox, after=cursor)
         if not runtime:
-            return "agent runner unavailable; recreate the sandbox"
+            return "agent runner unavailable; repair or upgrade the sandbox"
         if not runtime.get("runtime_id"):
-            return "unsupported legacy agent runner; recreate the sandbox"
+            return "legacy agent runner detected; upgrade the sandbox"
         previous_runtime_id = previous_runtime.get("runtime_id")
         current_runtime_id = runtime.get("runtime_id")
         previous_session = previous_runtime.get("session_id")
