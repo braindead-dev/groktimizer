@@ -210,6 +210,7 @@ button:disabled {
   padding: 12px 10px 10px;
   background: var(--paper);
   overflow: hidden;
+  transition: width 180ms ease, flex-basis 180ms ease, padding 180ms ease;
 }
 
 .sidebar-collapsed {
@@ -222,7 +223,7 @@ button:disabled {
 .sidebar-head {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-start;
   padding: 3px 6px 18px;
 }
 
@@ -236,7 +237,9 @@ button:disabled {
   letter-spacing: -0.02em;
 }
 
-.sidebar .brand-wordmark-image { width: 150px; height: auto; }
+.sidebar .brand-lockup { width: 145px; }
+.sidebar .brand-wordmark-image { width: 145px; height: auto; }
+.sidebar .brand-button { margin-left: 4px; margin-right: auto; }
 
 .sidebar-collapse-button {
   width: 28px;
@@ -276,7 +279,8 @@ button:disabled {
 }
 
 .sidebar-resize-handle:hover::after,
-.sidebar-resize-handle:focus-visible::after { background: var(--blue); }
+.sidebar-resize-handle:focus-visible::after { background: var(--muted); }
+.sidebar-resize-handle:focus-visible { outline-color: var(--muted); }
 
 .icon-button {
   width: 29px;
@@ -366,17 +370,8 @@ button:disabled {
   color: var(--ink);
 }
 
-.tree-disclosure {
-  width: 25px;
-  height: 100%;
-  display: grid;
-  flex: 0 0 auto;
-  place-items: center;
-  padding: 0;
-  color: var(--muted);
-}
-
-.project-leading-control {
+.project-leading-control,
+.team-leading-control {
   width: 25px;
   height: 100%;
   display: grid;
@@ -389,12 +384,19 @@ button:disabled {
 .project-row { padding-left: 5px; }
 
 .project-leading-icon,
-.project-leading-chevron { grid-area: 1 / 1; }
-.project-leading-chevron { display: none; }
+.project-leading-chevron,
+.team-leading-icon,
+.team-leading-chevron { grid-area: 1 / 1; }
+.project-leading-chevron,
+.team-leading-chevron { display: none; }
 .project-row:hover .project-leading-control:not(span) .project-leading-icon,
 .project-leading-control:focus-visible .project-leading-icon { display: none; }
 .project-row:hover .project-leading-control:not(span) .project-leading-chevron,
 .project-leading-control:focus-visible .project-leading-chevron { display: block; }
+.team-row:hover .team-leading-icon,
+.team-leading-control:focus-visible .team-leading-icon { display: none; }
+.team-row:hover .team-leading-chevron,
+.team-leading-control:focus-visible .team-leading-chevron { display: block; }
 
 .tree-main-action {
   min-width: 0;
@@ -434,7 +436,7 @@ button:disabled {
 .agent-row {
   gap: 7px;
   padding: 0 8px 0 4px;
-  color: #5c5f57;
+  color: var(--ink-soft);
 }
 
 .tree-icon {
@@ -492,7 +494,7 @@ button:disabled {
 .sidebar-collapsed .sidebar-section-head,
 .sidebar-collapsed .project-tree,
 .sidebar-collapsed .profile-copy { display: none; }
-.sidebar-collapsed .brand-button { width: 30px; justify-content: center; }
+.sidebar-collapsed .brand-button { width: 30px; justify-content: center; margin: 0; }
 .sidebar-collapsed .sidebar-collapse-button { display: none; }
 .sidebar-collapsed .brand-mark { width: 30px; height: 30px; }
 .sidebar-collapsed .primary-nav { width: 100%; justify-items: center; }
@@ -1374,7 +1376,7 @@ textarea::placeholder { color: var(--muted-light); }
   .sidebar-collapsed .sidebar-section-head,
   .sidebar-collapsed .project-tree,
   .sidebar-collapsed .profile-copy { display: initial; }
-  .sidebar-collapsed .brand-button { width: auto; justify-content: flex-start; }
+  .sidebar-collapsed .brand-button { width: auto; justify-content: flex-start; margin-right: auto; }
   .sidebar-collapsed .brand-mark { width: 26px; height: 26px; }
   .sidebar-collapsed .primary-nav { width: auto; justify-items: stretch; }
   .sidebar-collapsed .nav-row { width: 100%; justify-content: flex-start; padding: 0 10px; }

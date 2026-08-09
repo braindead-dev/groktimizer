@@ -69,7 +69,7 @@ export function HomeView() {
                 event.currentTarget.form?.requestSubmit();
               }
             }}
-            placeholder={liveOrchestrator ? "Ask or steer the main orchestrator…" : "Describe a measurable optimization objective…"}
+            placeholder="What would you like to optimize?"
             rows={1}
           />
           <div className="composer-toolbar">

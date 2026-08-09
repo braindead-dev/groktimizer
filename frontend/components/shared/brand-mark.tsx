@@ -15,7 +15,7 @@ export function BrandLockup() {
         className="brand-wordmark-image"
         src="/brand/groktimizer.svg"
         alt=""
-        width={612}
+        width={286}
         height={64}
         priority
       />

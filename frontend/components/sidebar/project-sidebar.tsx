@@ -19,6 +19,24 @@ import { StatusDot } from "@/components/shared/status";
 import type { Agent, Project, ResearchTeam, ViewSelection } from "@/lib/types";
 import { useResearchDispatch, useResearchState } from "@/store/research-store";
 
+const TEAM_COLORS = [
+  "#EF4444",
+  "#FB923C",
+  "#FBBF24",
+  "#A3E635",
+  "#22C55E",
+  "#22D3EE",
+  "#60A5FA",
+  "#A78BFA",
+  "#E879F9",
+] as const;
+
+function teamColor(teamId: string) {
+  let hash = 0;
+  for (const character of teamId) hash = (hash * 31 + character.charCodeAt(0)) >>> 0;
+  return TEAM_COLORS[hash % TEAM_COLORS.length];
+}
+
 function isSelected(selection: ViewSelection, projectId: string, agentId?: string) {
   if (agentId) return selection.type === "agent" && selection.agentId === agentId;
   return selection.type === "project" && selection.projectId === projectId;
@@ -59,18 +77,20 @@ function TeamBranch({ projectId, team }: { projectId: string; team: ResearchTeam
     <div className="team-branch">
       <div className={`tree-row team-row ${selected ? "tree-row-selected" : ""}`}>
         <button
-          className="tree-disclosure"
+          className="team-leading-control"
           aria-label={`${expanded ? "Collapse" : "Expand"} ${team.name}`}
           onClick={() => dispatch({ type: "toggle-team", teamId: team.id })}
         >
-          {expanded ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+          <span className="team-swatch team-leading-icon" style={{ backgroundColor: teamColor(team.id) }} />
+          {expanded
+            ? <ChevronDown className="team-leading-chevron" size={12} />
+            : <ChevronRight className="team-leading-chevron" size={12} />}
         </button>
         <button
           className="tree-main-action"
           disabled={!team.orchestrator.sandboxName}
           onClick={() => team.orchestrator.sandboxName && dispatch({ type: "select", selection: { type: "agent", projectId, agentId: team.orchestrator.id } })}
         >
-          <span className={`team-swatch swatch-${team.accent}`} />
           <span className="tree-label">{team.name}</span>
           <StatusDot status={team.orchestrator.status} />
         </button>
