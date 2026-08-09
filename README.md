@@ -91,8 +91,6 @@ Next.js deployment:
 ```bash
 GTZ_CONTROL_PLANE_URL=https://api.example.com
 GTZ_CONTROL_PLANE_TOKEN=...
-GTZ_DASHBOARD_USERNAME=operator
-GTZ_DASHBOARD_PASSWORD=...
 ```
 
 The browser receives neither the control-plane token nor provider credentials. Agent SSE streams

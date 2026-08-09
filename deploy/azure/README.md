@@ -31,5 +31,4 @@ sudo sqlite3 /var/lib/groktimizer/groktimizer.db 'PRAGMA integrity_check;'
 ```
 
 Only `GTZ_CONTROL_PLANE_URL` and `GTZ_CONTROL_PLANE_TOKEN` belong in Vercel. Both are server-only;
-never use a `NEXT_PUBLIC_` prefix. Set `GTZ_DASHBOARD_USERNAME` and `GTZ_DASHBOARD_PASSWORD` there
-as well to protect the operator UI. Provider keys remain in Azure Key Vault.
+never use a `NEXT_PUBLIC_` prefix. Provider keys remain in Azure Key Vault.

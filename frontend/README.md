@@ -36,8 +36,7 @@ uses the authenticated GitHub Contents API, cached for one minute. It does not c
 agents, messages, experiments, or compute utilization.
 
 Set `GTZ_CONTROL_PLANE_URL` and `GTZ_CONTROL_PLANE_TOKEN` as server-only Vercel variables to enable
-remote mode. `GTZ_DASHBOARD_USERNAME` and `GTZ_DASHBOARD_PASSWORD` protect the page and API routes;
-static brand assets and `install.sh` remain public. None of these variables use `NEXT_PUBLIC_`.
+remote mode. Neither variable uses `NEXT_PUBLIC_`, and provider credentials never enter Vercel.
 
 Deleting a project requires explicit confirmation and removes its Blaxel sandboxes, attributed
 RunPod resources, and SQLite activity state. Git branches and committed research artifacts remain
