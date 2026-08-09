@@ -12,9 +12,11 @@ export interface Agent {
   progress: number;
   tokens: string;
   elapsed: string;
+  finding?: string;
+  currentWork?: string;
   sandboxName?: string;
   branchName?: string;
-  runnerKind?: "durable" | "legacy" | "unavailable";
+  runnerKind?: "durable" | "persistent" | "legacy" | "unavailable";
 }
 
 export interface ResearchTeam {
@@ -30,6 +32,17 @@ export interface MetricPoint {
   run: number;
   value: number;
   label: string;
+}
+
+export interface MetricSeries {
+  key: string;
+  label: string;
+  unit: string;
+  direction: "higher" | "lower";
+  accent: ResearchTeam["accent"];
+  baseline: number;
+  best: number;
+  points: MetricPoint[];
 }
 
 export interface Decision {
@@ -55,6 +68,10 @@ export interface Project {
   baseline: number;
   best: number;
   trend: MetricPoint[];
+  metrics: MetricSeries[];
+  programTitle?: string;
+  sourceUrl?: string;
+  hardware?: string;
   orchestrator: Agent;
   implementor: Agent;
   teams: ResearchTeam[];

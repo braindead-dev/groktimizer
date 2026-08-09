@@ -165,6 +165,7 @@ function AgentControl({ project, agent, team }: { project: Project; agent: Agent
   const [stopping, setStopping] = useState(false);
   const [stopError, setStopError] = useState<string | null>(null);
   const canStopIndividually = Boolean(agent.sandboxName)
+    && agent.runnerKind !== "persistent"
     && (agent.role === "researcher" || agent.role === "implementor");
 
   async function handleStop() {
@@ -187,6 +188,17 @@ function AgentControl({ project, agent, team }: { project: Project; agent: Agent
         <section className="implementation-summary">
           <StatusPill status={agent.status} />
           <p>{agent.task}</p>
+        </section>
+        {agent.finding ? (
+          <section className="implementation-finding">
+            <span>Latest finding</span>
+            <p>{agent.finding}</p>
+          </section>
+        ) : null}
+        <section className="implementation-progress" aria-label={`${agent.progress}% complete`}>
+          <div><span>Research progress</span><strong>{agent.progress}%</strong></div>
+          <i><span style={{ width: `${agent.progress}%` }} /></i>
+          {agent.currentWork ? <p>{agent.currentWork}</p> : null}
         </section>
         <dl className="implementation-details">
           <div><dt>Branch</dt><dd>{agent.branchName ?? "Not assigned"}</dd></div>

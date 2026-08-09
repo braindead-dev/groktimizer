@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { ArrowDownRight, ArrowUpRight, Check, ChevronRight, Cpu, Database, Network, Sparkles, Trash2, X } from "lucide-react";
+import { ArrowDownRight, ArrowUpRight, Check, ChevronRight, Cpu, Database, ExternalLink, Network, Sparkles, Trash2, X } from "lucide-react";
 import { KpiChart } from "@/components/charts/kpi-chart";
 import { StatusDot, StatusPill } from "@/components/shared/status";
 import { deleteResearchProject } from "@/lib/control-plane-client";
@@ -13,19 +13,26 @@ export function ProjectOverview({ project }: { project: Project }) {
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
-  const lowerIsBetter = project.unit === "ms";
-  const delta = project.baseline ? ((project.best - project.baseline) / project.baseline) * 100 : 0;
-  const displayDelta = `${delta > 0 ? "+" : ""}${delta.toFixed(1)}%`;
+  const primaryMetric = project.metrics[0];
+  const lowerIsBetter = primaryMetric?.direction === "lower";
+  const delta = primaryMetric?.baseline
+    ? ((primaryMetric.best - primaryMetric.baseline) / primaryMetric.baseline) * 100
+    : 0;
+  const improvement = lowerIsBetter ? -delta : delta;
+  const displayDelta = `${improvement > 0 ? "+" : ""}${improvement.toFixed(1)}%`;
   const registeredAgents = [project.orchestrator, project.implementor, ...project.teams.flatMap((team) => [team.orchestrator, ...team.agents])]
     .filter((agent) => agent.sandboxName);
   const liveAgents = registeredAgents.filter((agent) => agent.status === "running" || agent.status === "thinking");
   const supportingMetrics = [
-    { label: "Lowest concurrency", value: String(project.baseline), unit: project.unit, detail: project.trend[0]?.label ?? "committed result" },
-    { label: "Benchmark points", value: String(project.trend.length), unit: "", detail: "committed results" },
-    project.source === "live"
-      ? { label: "Registered sandboxes", value: String(registeredAgents.length), unit: "", detail: `${project.teams.length} team tracks` }
-      : { label: "Source", value: "Repo", unit: "", detail: "committed benchmark" },
-  ];
+    ...project.metrics.slice(1, 3).map((metric) => ({
+      label: metric.label,
+      value: String(metric.best),
+      unit: metric.unit,
+      detail: metric.direction === "lower" ? "lower is better" : "higher is better",
+    })),
+    { label: "Active agents", value: String(liveAgents.length), unit: "", detail: `${project.teams.length} parallel teams` },
+    { label: "Validated steps", value: String(primaryMetric?.points.length ?? project.trend.length), unit: "", detail: "durable run ledger" },
+  ].slice(0, 3);
 
   async function deleteProject() {
     if (project.source !== "live" || !project.projectName || deleting) return;
@@ -47,6 +54,10 @@ export function ProjectOverview({ project }: { project: Project }) {
         <div>
           <div className="project-title-row"><h1>{project.shortName}</h1><StatusPill status={project.status} /></div>
           <p>{project.objective}</p>
+          <div className="project-provenance">
+            {project.hardware ? <span><Cpu size={12} />{project.hardware}</span> : null}
+            {project.sourceUrl ? <a href={project.sourceUrl} target="_blank" rel="noreferrer">Research source <ExternalLink size={11} /></a> : null}
+          </div>
         </div>
         <div className="project-actions">
           {project.orchestrator.sandboxName ? (
@@ -77,11 +88,11 @@ export function ProjectOverview({ project }: { project: Project }) {
 
       <section className="metric-marquee">
         <div className="metric-primary">
-          <div className="metric-label"><span className="signal-pulse" /> {project.metric}</div>
-          <div className="metric-value">{project.best}<span>{project.unit}</span></div>
+          <div className="metric-label"><span className="signal-pulse" /> {primaryMetric?.label ?? project.metric}</div>
+          <div className="metric-value">{primaryMetric?.best ?? project.best}<span>{primaryMetric?.unit ?? project.unit}</span></div>
           <div className="metric-delta delta-good">
             {lowerIsBetter ? <ArrowDownRight size={16} /> : <ArrowUpRight size={16} />}
-            {displayDelta} across tested concurrency
+            {displayDelta} from measured baseline
           </div>
         </div>
         <div className="metric-secondary-grid">
@@ -97,15 +108,21 @@ export function ProjectOverview({ project }: { project: Project }) {
 
       <section className="dashboard-grid">
         <div className="kpi-panel dashboard-panel">
-          <div className="panel-heading"><h2>{project.metric} across measured concurrency</h2><span className="panel-meta">Committed benchmark</span></div>
-          <KpiChart points={project.trend} baseline={project.baseline} unit={project.unit} lowerIsBetter={lowerIsBetter} />
+          <div className="panel-heading"><h2>KPI trajectory</h2><span className="panel-meta">Validated run ledger</span></div>
+          <KpiChart series={project.metrics} />
         </div>
 
         <div className="pulse-panel dashboard-panel">
           <div className="panel-heading"><h2>{project.source === "live" ? "Research activity" : "Benchmark provenance"}</h2>{project.source === "live" ? <Network size={17} /> : <Database size={17} />}</div>
-          <div className="pulse-visual">
-            <div className="pulse-rings"><span /><span /><span /><i /></div>
-            <div className="pulse-number"><strong>{project.source === "live" ? liveAgents.length : project.trend.length}</strong><span>{project.source === "live" ? <>agents<br />in motion</> : <>measured<br />points</>}</span></div>
+          <div className="activity-summary">
+            <span>Working now</span>
+            <strong>{project.source === "live" ? liveAgents.length : project.trend.length}</strong>
+            <small>{project.source === "live" ? "active research agents" : "committed measurements"}</small>
+          </div>
+          <div className="activity-team-strip" aria-label="Team activity">
+            {project.teams.map((team) => (
+              <i className={`chart-accent-${team.accent}`} key={team.id} title={team.name} />
+            ))}
           </div>
           <div className="pulse-stats">
             <div><Cpu size={13} /><span>{project.source === "live" ? "Sandboxes" : "GPU"}</span><strong>{project.source === "live" ? registeredAgents.length : "96 GB"}</strong></div>
@@ -117,7 +134,7 @@ export function ProjectOverview({ project }: { project: Project }) {
           <div className="panel-heading"><h2>Parallel tracks</h2><span className="panel-meta">{project.teams.length} teams</span></div>
           <div className="team-overview-list">
             {project.teams.length ? project.teams.map((team) => {
-              const complete = team.agents.filter((agent) => agent.status === "complete").length;
+              const active = team.agents.filter((agent) => agent.status === "running" || agent.status === "thinking").length;
               return (
                 <button
                   key={team.id}
@@ -125,7 +142,7 @@ export function ProjectOverview({ project }: { project: Project }) {
                 >
                   <span className={`team-index swatch-${team.accent}`}>{String(project.teams.indexOf(team) + 1).padStart(2, "0")}</span>
                   <span className="team-overview-copy"><strong>{team.name}</strong><small>{team.agents.length} agents</small></span>
-                  <span className="team-overview-meta"><StatusDot status={team.orchestrator.status} />{complete}/{team.agents.length} done</span>
+                  <span className="team-overview-meta"><StatusDot status={team.orchestrator.status} />{active}/{team.agents.length} active</span>
                   <ChevronRight size={14} />
                 </button>
               );
@@ -134,7 +151,7 @@ export function ProjectOverview({ project }: { project: Project }) {
         </div>
 
         <div className="decision-panel dashboard-panel">
-          <div className="panel-heading"><h2>Benchmark evidence</h2></div>
+          <div className="panel-heading"><h2>Research decisions</h2><span className="panel-meta">Evidence before promotion</span></div>
           <div className="decision-list">
             {project.decisions.length ? project.decisions.map((decision) => (
               <div className="decision-row" key={decision.id}>

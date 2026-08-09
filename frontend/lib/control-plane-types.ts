@@ -18,6 +18,57 @@ export interface LiveAgentSnapshot {
   ingest_error: string | null;
 }
 
+export interface ResearchAgentRecord {
+  id: string;
+  name: string;
+  role: "main" | "team" | "implementer" | "reconciler";
+  status: "running" | "thinking" | "complete";
+  task: string;
+  branch: string;
+  progress: number;
+  finding: string;
+  current_work: string;
+  tools: string[];
+}
+
+export interface ResearchProjectRecord {
+  id: string;
+  title: string;
+  objective: string;
+  status: "running" | "complete";
+  created_at: string;
+  source_url: string;
+  record_source_url: string;
+  program_title: string;
+  hardware: string;
+  orchestrator: ResearchAgentRecord;
+  reconciler: ResearchAgentRecord;
+  teams: Array<{
+    id: string;
+    name: string;
+    accent: "orange" | "blue" | "lime" | "violet";
+    thesis: string;
+    orchestrator: ResearchAgentRecord;
+    agents: ResearchAgentRecord[];
+  }>;
+  metrics: Array<{
+    key: string;
+    label: string;
+    unit: string;
+    direction: "higher" | "lower";
+    accent: "orange" | "blue" | "lime" | "violet";
+    points: Array<{ label: string; value: number }>;
+  }>;
+  decisions: Array<{
+    id: string;
+    title: string;
+    detail: string;
+    impact: string;
+    state: "promoted" | "validating" | "rejected";
+    time: string;
+  }>;
+}
+
 export interface ControlPlaneSnapshot {
   project: string;
   project_state: {
@@ -50,6 +101,7 @@ export interface ControlPlaneSnapshot {
     project: string;
     project_state: ControlPlaneSnapshot["project_state"];
     agents: LiveAgentSnapshot[];
+    record?: ResearchProjectRecord | null;
   }>;
 }
 

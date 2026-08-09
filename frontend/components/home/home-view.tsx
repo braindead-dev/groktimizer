@@ -19,6 +19,11 @@ export function HomeView() {
   const [launching, setLaunching] = useState(false);
   const [launchError, setLaunchError] = useState<string | null>(null);
   const liveProjects = projects.filter((project) => project.source === "live");
+  const activeAgents = liveProjects.flatMap((project) => [
+    project.orchestrator,
+    project.implementor,
+    ...project.teams.flatMap((team) => [team.orchestrator, ...team.agents]),
+  ]).filter((agent) => agent.status === "running" || agent.status === "thinking").length;
 
   async function launch(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -51,6 +56,13 @@ export function HomeView() {
         <div className="hero-mark">
           <BrandLockup />
         </div>
+        {liveProjects.length ? (
+          <div className="program-heading">
+            <span>Autoresearch program</span>
+            <h1>{liveProjects[0].programTitle ?? "Optimize Grok 2"}</h1>
+            <p><StatusDot status="running" /> {activeAgents} agents working across {liveProjects.length} projects</p>
+          </div>
+        ) : null}
         <form className="launch-composer" onSubmit={launch}>
           <textarea
             aria-label="Research objective"
@@ -99,9 +111,14 @@ export function HomeView() {
                   ) : <StatusPill status={project.status} />}
                 </div>
                 <p className="recent-project-objective">{project.objective}</p>
-                {project.source !== "live" ? (
-                  <footer><strong>{project.best}<small> {project.unit} {project.metric.toLowerCase()}</small></strong></footer>
-                ) : null}
+                <footer className="recent-project-metrics">
+                  {project.metrics.slice(0, 2).map((metric) => (
+                    <span key={metric.key}>
+                      <small>{metric.label}</small>
+                      <strong>{metric.best}<em>{metric.unit}</em></strong>
+                    </span>
+                  ))}
+                </footer>
               </button>
             );
           })}

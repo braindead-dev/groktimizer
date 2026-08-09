@@ -2,7 +2,13 @@
 
 import { createContext, useContext, useEffect, useReducer, type Dispatch, type ReactNode } from "react";
 import { fetchControlPlane } from "@/lib/control-plane-client";
-import type { BaselineSnapshot, ControlPlaneSnapshot, LiveAgentSnapshot } from "@/lib/control-plane-types";
+import type {
+  BaselineSnapshot,
+  ControlPlaneSnapshot,
+  LiveAgentSnapshot,
+  ResearchAgentRecord,
+  ResearchProjectRecord,
+} from "@/lib/control-plane-types";
 import type { Agent, Project, ResearchTeam, ViewSelection } from "@/lib/types";
 
 interface ControlPlaneState {
@@ -111,6 +117,20 @@ function projectFromBaseline(baseline: BaselineSnapshot): Project {
       value: Number(point.aggregateDecodeTps.toFixed(1)),
       label: `Concurrency ${point.concurrency}`,
     })),
+    metrics: [{
+      key: "aggregate-throughput",
+      label: "Aggregate throughput",
+      unit: "tok/s",
+      direction: "higher",
+      accent: "orange",
+      baseline: Number((first?.aggregateDecodeTps ?? 0).toFixed(1)),
+      best: Number((best?.aggregateDecodeTps ?? 0).toFixed(1)),
+      points: throughput.map((point) => ({
+        run: point.concurrency,
+        value: Number(point.aggregateDecodeTps.toFixed(1)),
+        label: `Concurrency ${point.concurrency}`,
+      })),
+    }],
     orchestrator: placeholderAgent(
       "baseline-no-orchestrator",
       "No live orchestrator",
@@ -142,6 +162,85 @@ function projectFromBaseline(baseline: BaselineSnapshot): Project {
         time: "measured",
       },
     ],
+  };
+}
+
+function recordAgent(
+  source: ResearchAgentRecord,
+  project: string,
+  team: string,
+): Agent {
+  const role: Agent["role"] = source.role === "main"
+    ? "orchestrator"
+    : source.role === "team"
+      ? "team-orchestrator"
+      : source.role === "reconciler"
+        ? "implementor"
+        : "researcher";
+  return {
+    id: `gtz-${project}-${team}-${source.id}`,
+    name: source.name,
+    role,
+    status: source.status,
+    task: source.task,
+    progress: source.progress,
+    tokens: `${source.progress}%`,
+    elapsed: source.status === "complete" ? "validated" : "live now",
+    finding: source.finding,
+    currentWork: source.current_work,
+    sandboxName: `gtz-${project}-${team}-${source.id}`,
+    branchName: source.branch,
+    runnerKind: "persistent",
+  };
+}
+
+function projectFromRecord(record: ResearchProjectRecord): Project {
+  const metrics = record.metrics.map((metric) => {
+    const values = metric.points.map((point) => point.value);
+    return {
+      ...metric,
+      baseline: values[0] ?? 0,
+      best: metric.direction === "higher" ? Math.max(...values) : Math.min(...values),
+      points: metric.points.map((point, index) => ({
+        run: index + 1,
+        value: point.value,
+        label: point.label,
+      })),
+    };
+  });
+  const primary = metrics[0];
+  const teams = record.teams.map((team): ResearchTeam => ({
+    id: `record-${record.id}-${team.id}`,
+    name: team.name,
+    accent: team.accent,
+    thesis: team.thesis,
+    orchestrator: recordAgent(team.orchestrator, record.id, team.id),
+    agents: team.agents.map((agent) => recordAgent(agent, record.id, team.id)),
+  }));
+  return {
+    id: `live-${record.id}`,
+    projectName: record.id,
+    source: "live",
+    name: record.title,
+    shortName: record.title,
+    objective: record.objective,
+    status: record.status,
+    createdAt: record.created_at,
+    metric: primary.label,
+    unit: primary.unit,
+    baseline: primary.baseline,
+    best: primary.best,
+    trend: primary.points,
+    metrics,
+    programTitle: record.program_title,
+    sourceUrl: record.source_url,
+    hardware: record.hardware,
+    orchestrator: recordAgent(record.orchestrator, record.id, "hq"),
+    implementor: recordAgent(record.reconciler, record.id, "hq"),
+    teams,
+    decisions: record.decisions,
+    lifecycle: "running",
+    lifecycleError: null,
   };
 }
 
@@ -201,6 +300,8 @@ function normalizeLiveAgent(source: LiveAgentSnapshot, referenceTime: number): A
 }
 
 function projectFromSnapshot(snapshot: ControlPlaneSnapshot, baseline: BaselineSnapshot): Project {
+  const projectRecord = snapshot.projects.find((project) => project.project === snapshot.project)?.record;
+  if (projectRecord) return projectFromRecord(projectRecord);
   const base = projectFromBaseline(baseline);
   const parsedReferenceTime = Date.parse(snapshot.generated_at) / 1000;
   const referenceTime = Number.isFinite(parsedReferenceTime) ? parsedReferenceTime : 0;
@@ -372,6 +473,7 @@ function reducer(state: ResearchState, action: Action): ResearchState {
     case "hydrate-control-plane": {
       const liveSnapshots = action.snapshot.projects.filter((snapshot) =>
         snapshot.agents.length > 0
+        || Boolean(snapshot.record)
         || snapshot.project_state.status === "provisioning"
         || snapshot.project_state.status === "running"
         || snapshot.project_state.status === "failed");
@@ -403,6 +505,7 @@ function reducer(state: ResearchState, action: Action): ResearchState {
           project: snapshot.project,
           project_state: snapshot.project_state,
           agents: snapshot.agents,
+          projects: [{ ...snapshot }],
         },
         action.baseline,
       ));
@@ -425,7 +528,8 @@ function reducer(state: ResearchState, action: Action): ResearchState {
           ...state.expandedProjects,
           ...projects.map((project) => project.id),
         ])),
-        expandedTeams: projects.flatMap((project) => project.teams.map((team) => team.id)),
+        expandedTeams: state.expandedTeams.filter((teamId) =>
+          projects.some((project) => project.teams.some((team) => team.id === teamId))),
         controlPlane: {
           mode: "live",
           project: action.snapshot.project,
